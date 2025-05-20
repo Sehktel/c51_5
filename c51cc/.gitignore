@@ -1,0 +1,17 @@
+/target
+/classes
+/checkouts
+profiles.clj
+pom.xml
+pom.xml.asc
+*.jar
+*.class
+/.lein-*
+/.nrepl-port
+/.prepl-port
+.hgignore
+.hg/
+test.txt
+*.bak
+doc3*.pdf
+mikroc-8051-manual-v100.pdf 
