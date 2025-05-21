@@ -1,0 +1,5 @@
+.clj-kondo/*
+.clj-kondo/.cache/*
+.lsp/*
+.vscode/*
+/c51cc/.clj-kondo/*
