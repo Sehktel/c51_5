@@ -29,4 +29,50 @@
             (println "Тип выражения:" (:ast-type expr))
             (when (= :call-expression (:ast-type expr))
               (println "Callee:" (:callee expr))
-              (println "Arguments:" (:arguments expr))))))))) 
+              (println "Arguments:" (:arguments expr)))))))))
+
+(require '[c51cc.parser :as p])
+(require '[c51cc.lexer :as l])
+
+(println "=== Отладочный тест макроса do-parse ===")
+
+;; Проверим макроэкспансию простого случая
+(println "\nМакроэкспансия простого случая:")
+(try
+  (let [expanded (macroexpand '(p/do-parse 
+                                 (p/return-parser :test)))]
+    (println "Результат:" expanded))
+  (catch Exception e
+    (println "Ошибка:" (.getMessage e))))
+
+;; Проверим макроэкспансию с одной парой
+(println "\nМакроэкспансия с одной парой:")
+(try
+  (let [expanded (macroexpand '(p/do-parse 
+                                 x (p/expect-token :int)
+                                 (p/return-parser x)))]
+    (println "Результат:" (take 100 (str expanded))))
+  (catch Exception e
+    (println "Ошибка:" (.getMessage e))))
+
+;; Проверим работу return-parser
+(println "\nПроверка return-parser:")
+(try
+  (let [tokens (l/tokenize "int")
+        state (p/parse-state tokens)
+        parser (p/return-parser :test)
+        result (parser state)]
+    (println "Результат return-parser:" result))
+  (catch Exception e
+    (println "Ошибка return-parser:" (.getMessage e))))
+
+;; Проверим работу expect-token
+(println "\nПроверка expect-token:")
+(try
+  (let [tokens (l/tokenize "int")
+        state (p/parse-state tokens)
+        parser (p/expect-token :int)
+        result (parser state)]
+    (println "Результат expect-token:" result))
+  (catch Exception e
+    (println "Ошибка expect-token:" (.getMessage e)))) 
