@@ -45,11 +45,19 @@
 (def less-equal         {:type :comparison-operator  :value :less-equal    })
 (def not-equal          {:type :comparison-operator  :value :not-equal     })
 
+;; Операторы сдвига
+(def shift-left         {:type :bitwise-operator     :value :shift-left    })
+(def shift-right        {:type :bitwise-operator     :value :shift-right   })
+(def shift-left-equal   {:type :assignment-operator  :value :shift-left-equal  })
+(def shift-right-equal  {:type :assignment-operator  :value :shift-right-equal })
+
 ;; Операторы присваивания
-(def equal      {:type :assignment-operator   :value :equal     })
 (def and-equal  {:type :assignment-operator   :value :and-equal })
 (def or-equal   {:type :assignment-operator   :value :or-equal  })
 (def xor-equal  {:type :assignment-operator   :value :xor-equal })
+(def plus-equal {:type :assignment-operator   :value :plus-equal})
+(def minus-equal{:type :assignment-operator   :value :minus-equal})
+(def equal      {:type :assignment-operator   :value :equal     })
 
 ;; Битовые операторы
 (def and-bitwise {:type :bitwise-operator  :value :and })
@@ -111,7 +119,7 @@
 На входе -- строка 
 Ны выходе -- набор токенов"
   [input]  
-  (let [token-pattern #"\+\+|--|\w+|>=|<=|==|!=|&&|\|\||&=|\|=|\^=|!|[(){}\[\];:=<>&|^~+\-*/%,.]|0x[0-9A-Fa-f]+|\d+"
+  (let [token-pattern #"<<=|>>=|<<|>>|\+\+|--|\+=|-=|\w+|>=|<=|==|!=|&&|\|\||&=|\|=|\^=|!|[(){}\[\];:=<>&|^~+\-*/%,.]|0x[0-9A-Fa-f]+|\d+"
 
   ;;( let [token-pattern #">=|<=|==|!=|&&|\|\||&=|\|=|\^=|!|\w+|[(){}\[\];:=<>&|^~+\-*/%,.]|0x[0-9A-Fa-f]+|\d+"
     ;;     #"
@@ -138,8 +146,8 @@
           (= token "void")      [void-type]
           (= token "int")       [int-type]
           (= token "char")      [char-type]
-          (= token "signed")    {:type :type-keyword :base-type nil :signedness :signed :value nil}
-          (= token "unsigned")  {:type :type-keyword :base-type nil :signedness :unsigned :value nil}
+          (= token "signed")    [{:type :type-keyword :base-type nil :signedness :signed :value :signed}]
+          (= token "unsigned")  [{:type :type-keyword :base-type nil :signedness :unsigned :value :unsigned}]
 
           ;; Управляющие конструкции
           (= token "if")     [if-keyword]
@@ -172,10 +180,18 @@
           (= token "<=") [less-equal]
           (= token "!=") [not-equal]
 
+          ;; Операторы сдвига
+          (= token "<<") [shift-left]
+          (= token ">>") [shift-right]
+          (= token "<<=") [shift-left-equal]
+          (= token ">>=") [shift-right-equal]
+
           ;; Операторы присваивания
           (= token "&=") [and-equal]
           (= token "|=") [or-equal]
           (= token "^=") [xor-equal]
+          (= token "+=") [plus-equal]
+          (= token "-=") [minus-equal]
           (= token "=")  [equal]
 
           ;; Логические операторы

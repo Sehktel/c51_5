@@ -21,15 +21,15 @@
              :signedness nil
              :value :char}] (lexer/tokenize "char")))
     
-    (is (= {:type :type-keyword
+    (is (= [{:type :type-keyword
             :base-type nil
             :signedness :signed
-            :value nil} (lexer/tokenize "signed")))
+            :value :signed}] (lexer/tokenize "signed")))
     
-    (is (= {:type :type-keyword
+    (is (= [{:type :type-keyword
             :base-type nil
             :signedness :unsigned
-            :value nil} (lexer/tokenize "unsigned"))))
+            :value :unsigned}] (lexer/tokenize "unsigned"))))
 
   (testing "Токенизация составных типов"
     (is (= {:type :type-keyword

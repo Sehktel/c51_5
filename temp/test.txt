@@ -1,0 +1,247 @@
+
+lein test c51cc.parser-test
+
+lein test :only c51cc.parser-test/test-error-handling
+
+FAIL in (test-error-handling) (parser_test.clj:537)
+�������������� ������ - ������������� ������
+expected: (not (parse-successful? result))
+  actual: (not (not true))
+
+lein test :only c51cc.parser-test/test-error-handling
+
+FAIL in (test-error-handling) (parser_test.clj:538)
+�������������� ������ - ������������� ������
+expected: (string? (get-error result))
+  actual: (not (string? nil))
+
+lein test :only c51cc.parser-test/test-error-handling
+
+FAIL in (test-error-handling) (parser_test.clj:542)
+�������������� ������ - ����������� �����
+expected: (not (parse-successful? result))
+  actual: (not (not true))
+
+lein test :only c51cc.parser-test/test-error-handling
+
+FAIL in (test-error-handling) (parser_test.clj:543)
+�������������� ������ - ����������� �����
+expected: (string? (get-error result))
+  actual: (not (string? nil))
+
+lein test :only c51cc.parser-test/test-ast-validation
+
+FAIL in (test-ast-validation) (parser_test.clj:579)
+��������� ������������ AST
+expected: (parser/validate-ast ast)
+  actual: (not (parser/validate-ast {:ast-type :program, :declarations [{:ast-type :function-declaration, :return-type {:signedness nil, :base-type :int}, :name "factorial", :parameters ({:type {:signedness nil, :base-type :int}, :name "n"}), :body {:ast-type :block-statement, :statements [{:ast-type :if-statement, :condition {:ast-type :binary-expression, :operator :less-equal, :left {:ast-type :identifier, :name "n"}, :right {:ast-type :literal, :value 1, :literal-type :number}}, :then-branch {:ast-type :return-statement, :expression {:ast-type :literal, :value 1, :literal-type :number}}, :else-branch {:ast-type :return-statement, :expression {:ast-type :binary-expression, :operator :multiply, :left {:ast-type :identifier, :name "n"}, :right {:ast-type :call-expression, :callee {:ast-type :identifier, :name "factorial"}, :arguments [{:ast-type :binary-expression, :operator :minus, :left {:ast-type :identifier, :name "n"}, :right {:ast-type :literal, :value 1, :literal-type :number}}]}}}}]}}]}))
+
+lein test :only c51cc.parser-test/test-complete-programs
+
+FAIL in (test-complete-programs) (parser_test.clj:515)
+��������� � ���������� �������
+expected: (= 2 (count (:statements body)))
+  actual: (not (= 2 0))
+
+lein test :only c51cc.parser-test/test-complete-programs
+
+FAIL in (test-complete-programs) (parser_test.clj:516)
+��������� � ���������� �������
+expected: (= :variable-declaration (:ast-type (first (:statements body))))
+  actual: (not (= :variable-declaration nil))
+
+lein test :only c51cc.parser-test/test-complete-programs
+
+FAIL in (test-complete-programs) (parser_test.clj:517)
+��������� � ���������� �������
+expected: (= :block-statement (:ast-type (second (:statements body))))
+  actual: (not (= :block-statement nil))
+
+lein test :only c51cc.parser-test/test-complete-programs
+
+FAIL in (test-complete-programs) (parser_test.clj:525)
+��������� � ������� � ���������
+expected: (= 3 (count (:statements body)))
+  actual: (not (= 3 0))
+
+lein test :only c51cc.parser-test/test-complete-programs
+
+FAIL in (test-complete-programs) (parser_test.clj:526)
+��������� � ������� � ���������
+expected: (= :variable-declaration (:ast-type (first (:statements body))))
+  actual: (not (= :variable-declaration nil))
+
+lein test :only c51cc.parser-test/test-complete-programs
+
+FAIL in (test-complete-programs) (parser_test.clj:527)
+��������� � ������� � ���������
+expected: (= :for-statement (:ast-type (second (:statements body))))
+  actual: (not (= :for-statement nil))
+
+lein test :only c51cc.parser-test/test-complete-programs
+
+FAIL in (test-complete-programs) (parser_test.clj:528)
+��������� � ������� � ���������
+expected: (= :return-statement (:ast-type (nth (:statements body) 2)))
+  actual: (not (= :return-statement nil))
+
+lein test :only c51cc.parser-test/test-statements
+
+FAIL in (test-statements) (parser_test.clj:408)
+���� ����������
+expected: (= :block-statement (:ast-type block))
+  actual: (not (= :block-statement nil))
+
+lein test :only c51cc.parser-test/test-statements
+
+FAIL in (test-statements) (parser_test.clj:409)
+���� ����������
+expected: (= 2 (count (:statements block)))
+  actual: (not (= 2 0))
+
+lein test :only c51cc.parser-test/test-statements
+
+FAIL in (test-statements) (parser_test.clj:435)
+���� while
+expected: (= :while-statement (:ast-type while-stmt))
+  actual: (not (= :while-statement nil))
+
+lein test :only c51cc.parser-test/test-statements
+
+FAIL in (test-statements) (parser_test.clj:436)
+���� while
+expected: (= :binary-expression (:ast-type (:condition while-stmt)))
+  actual: (not (= :binary-expression nil))
+
+lein test :only c51cc.parser-test/test-statements
+
+FAIL in (test-statements) (parser_test.clj:437)
+���� while
+expected: (= :expression-statement (:ast-type (:body while-stmt)))
+  actual: (not (= :expression-statement nil))
+
+lein test :only c51cc.parser-test/test-statements
+
+FAIL in (test-statements) (parser_test.clj:444)
+���� for
+expected: (= :for-statement (:ast-type for-stmt))
+  actual: (not (= :for-statement nil))
+
+lein test :only c51cc.parser-test/test-statements
+
+FAIL in (test-statements) (parser_test.clj:445)
+���� for
+expected: (= :assignment-expression (:ast-type (:init for-stmt)))
+  actual: (not (= :assignment-expression nil))
+
+lein test :only c51cc.parser-test/test-statements
+
+FAIL in (test-statements) (parser_test.clj:446)
+���� for
+expected: (= :binary-expression (:ast-type (:condition for-stmt)))
+  actual: (not (= :binary-expression nil))
+
+lein test :only c51cc.parser-test/test-statements
+
+FAIL in (test-statements) (parser_test.clj:447)
+���� for
+expected: (= :unary-expression (:ast-type (:update for-stmt)))
+  actual: (not (= :unary-expression nil))
+
+lein test :only c51cc.parser-test/test-statements
+
+FAIL in (test-statements) (parser_test.clj:448)
+���� for
+expected: (= :expression-statement (:ast-type (:body for-stmt)))
+  actual: (not (= :expression-statement nil))
+
+lein test :only c51cc.parser-test/test-integration-with-lexer
+
+FAIL in (test-integration-with-lexer) (parser_test.clj:636)
+���������� � �������� - ����������� ���������
+expected: (= 3 (count (:declarations ast)))
+  actual: (not (= 3 1))
+
+lein test :only c51cc.parser-test/test-integration-with-lexer
+
+FAIL in (test-integration-with-lexer) (parser_test.clj:639)
+���������� � �������� - ����������� ���������
+expected: (= :function-declaration (:ast-type (second (:declarations ast))))
+  actual: (not (= :function-declaration nil))
+
+lein test :only c51cc.parser-test/test-integration-with-lexer
+
+ERROR in (test-integration-with-lexer) (PersistentVector.java:158)
+���������� � �������� - ����������� ���������
+expected: (= :function-declaration (:ast-type (nth (:declarations ast) 2)))
+  actual: java.lang.IndexOutOfBoundsException: null
+ at clojure.lang.PersistentVector.arrayFor (PersistentVector.java:158)
+    clojure.lang.PersistentVector.nth (PersistentVector.java:162)
+    clojure.lang.RT.nth (RT.java:896)
+    c51cc.parser_test$fn__1779$fn__1780.invoke (parser_test.clj:640)
+    c51cc.parser_test$fn__1779.invokeStatic (parser_test.clj:616)
+    c51cc.parser_test/fn (parser_test.clj:615)
+    clojure.test$test_var$fn__9856.invoke (test.clj:717)
+    clojure.test$test_var.invokeStatic (test.clj:717)
+    clojure.test$test_var.invoke (test.clj:708)
+    clojure.test$test_vars$fn__9882$fn__9887.invoke (test.clj:735)
+    clojure.test$default_fixture.invokeStatic (test.clj:687)
+    clojure.test$default_fixture.invoke (test.clj:683)
+    clojure.test$test_vars$fn__9882.invoke (test.clj:735)
+    clojure.test$default_fixture.invokeStatic (test.clj:687)
+    clojure.test$default_fixture.invoke (test.clj:683)
+    clojure.test$test_vars.invokeStatic (test.clj:731)
+    clojure.test$test_all_vars.invokeStatic (test.clj:737)
+    clojure.test$test_ns.invokeStatic (test.clj:758)
+    clojure.test$test_ns.invoke (test.clj:743)
+    user$eval227$fn__350.invoke (form-init2950764400673897542.clj:1)
+    clojure.lang.AFn.applyToHelper (AFn.java:156)
+    clojure.lang.AFn.applyTo (AFn.java:144)
+    clojure.core$apply.invokeStatic (core.clj:669)
+    clojure.core$apply.invoke (core.clj:662)
+    leiningen.core.injected$compose_hooks$fn__154.doInvoke (form-init2950764400673897542.clj:1)
+    clojure.lang.RestFn.applyTo (RestFn.java:137)
+    clojure.core$apply.invokeStatic (core.clj:667)
+    clojure.core$apply.invoke (core.clj:662)
+    leiningen.core.injected$run_hooks.invokeStatic (form-init2950764400673897542.clj:1)
+    leiningen.core.injected$run_hooks.invoke (form-init2950764400673897542.clj:1)
+    leiningen.core.injected$prepare_for_hooks$fn__159$fn__160.doInvoke (form-init2950764400673897542.clj:1)
+    clojure.lang.RestFn.applyTo (RestFn.java:137)
+    clojure.lang.AFunction$1.doInvoke (AFunction.java:31)
+    clojure.lang.RestFn.invoke (RestFn.java:408)
+    clojure.core$map$fn__5935.invoke (core.clj:2772)
+    clojure.lang.LazySeq.sval (LazySeq.java:42)
+    clojure.lang.LazySeq.seq (LazySeq.java:51)
+    clojure.lang.Cons.next (Cons.java:39)
+    clojure.lang.RT.boundedLength (RT.java:1790)
+    clojure.lang.RestFn.applyTo (RestFn.java:130)
+    clojure.core$apply.invokeStatic (core.clj:669)
+    clojure.test$run_tests.invokeStatic (test.clj:768)
+    clojure.test$run_tests.doInvoke (test.clj:768)
+    clojure.lang.RestFn.applyTo (RestFn.java:137)
+    clojure.core$apply.invokeStatic (core.clj:667)
+    clojure.core$apply.invoke (core.clj:662)
+    user$eval227$fn__360$fn__413.invoke (form-init2950764400673897542.clj:1)
+    user$eval227$fn__360$fn__361.invoke (form-init2950764400673897542.clj:1)
+    user$eval227$fn__360.invoke (form-init2950764400673897542.clj:1)
+    user$eval227.invokeStatic (form-init2950764400673897542.clj:1)
+    user$eval227.invoke (form-init2950764400673897542.clj:1)
+    clojure.lang.Compiler.eval (Compiler.java:7194)
+    clojure.lang.Compiler.eval (Compiler.java:7184)
+    clojure.lang.Compiler.load (Compiler.java:7653)
+    clojure.lang.Compiler.loadFile (Compiler.java:7591)
+    clojure.main$load_script.invokeStatic (main.clj:475)
+    clojure.main$init_opt.invokeStatic (main.clj:477)
+    clojure.main$init_opt.invoke (main.clj:477)
+    clojure.main$initialize.invokeStatic (main.clj:508)
+    clojure.main$null_opt.invokeStatic (main.clj:542)
+    clojure.main$null_opt.invoke (main.clj:539)
+    clojure.main$main.invokeStatic (main.clj:664)
+    clojure.main$main.doInvoke (main.clj:616)
+    clojure.lang.RestFn.applyTo (RestFn.java:137)
+    clojure.lang.Var.applyTo (Var.java:705)
+    clojure.main.main (main.java:40)
+
+Ran 16 tests containing 232 assertions.
+24 failures, 1 errors.
+Subprocess failed (exit code: 1)
