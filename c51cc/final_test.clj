@@ -17,14 +17,14 @@
   (catch Exception e
     (println "❌ Ошибка:" (.getMessage e))))
 
-;; Тест 2: Одна пара binding-expression
+;; Тест 2: Одна пара binding-expression + финальное выражение
 (println "\n2. Одна пара binding-expression:")
 (try
   (let [tokens (l/tokenize "int")
         state (p/parse-state tokens)
         parser-fn (p/do-parse 
-                    token (p/expect-token :int)
-                    (p/return-parser token))
+                    token-var (p/expect-token :int)
+                    (p/return-parser token-var))
         result (parser-fn state)]
     (println "Результат:" result)
     (if (:success? result)
@@ -33,15 +33,15 @@
   (catch Exception e
     (println "❌ Ошибка:" (.getMessage e))))
 
-;; Тест 3: Две пары binding-expression
+;; Тест 3: Две пары binding-expression + финальное выражение
 (println "\n3. Две пары binding-expression:")
 (try
   (let [tokens (l/tokenize "int x")
         state (p/parse-state tokens)
         parser-fn (p/do-parse 
-                    type-token (p/expect-token :int)
-                    name-token (p/expect-token :identifier)
-                    (p/return-parser {:type type-token :name name-token}))
+                    type-token-var (p/expect-token :int)
+                    name-token-var (p/expect-token :identifier)
+                    (p/return-parser {:type type-token-var :name name-token-var}))
         result (parser-fn state)]
     (println "Результат:" result)
     (if (:success? result)
@@ -60,12 +60,11 @@
   (catch Exception e
     (println "✅ Защита работает:" (.getMessage e))))
 
-;; Тест 5: Валидация четности аргументов
+;; Тест 5: Валидация нечетности аргументов
 (println "\n5. Валидация нечетности аргументов:")
 (try
   (macroexpand '(p/do-parse 
-                  x (p/expect-token :int)
-                  y (p/expect-token :identifier)))  ; Четное количество - ошибка
+                  x (p/expect-token :int)))  ; Четное количество - ошибка
   (println "❌ Валидация НЕ работает")
   (catch Exception e
     (println "✅ Валидация работает:" (.getMessage e))))

@@ -50,7 +50,8 @@
 ;; Макрос для удобной композиции парсеров (ГИГИЕНИЧЕСКАЯ ВЕРСИЯ)
 (defmacro do-parse 
   "Гигиенический макрос для последовательной композиции парсеров в стиле do-notation
-   Обеспечивает полную защиту от захвата переменных и валидацию входных данных"
+   Обеспечивает полную защиту от захвата переменных и валидацию входных данных
+   Символ _ используется для игнорирования результатов парсинга"
   [& bindings]
   ;; Валидация входных данных - последний элемент должен быть выражением
   (when (even? (count bindings))
@@ -64,9 +65,11 @@
         binding-pairs (partition 2 (butlast all-args))
         forbidden-names #{'state 'state# 'result 'result# 'parser-state 'parse-result}]
     
-    ;; Проверка на запрещенные имена переменных
+    ;; Проверка на запрещенные имена переменных (кроме _)
     (doseq [[binding _] binding-pairs]
-      (when (and (symbol? binding) (forbidden-names binding))
+      (when (and (symbol? binding) 
+                 (not= binding '_)
+                 (forbidden-names binding))
         (throw (ex-info "Запрещенное имя переменной в do-parse - может вызвать захват переменных" 
                        {:forbidden-binding binding
                         :forbidden-names forbidden-names}))))
@@ -74,27 +77,33 @@
     ;; Рекурсивное построение гигиенического кода
     (letfn [(build-parser-chain [pairs final-expr]
               (if (empty? pairs)
-                ;; Финальное выражение - если это уже парсер, используем как есть
-                final-expr
+                ;; Финальное выражение - проверяем, является ли оно уже парсером
+                (if (and (list? final-expr) 
+                         (or (= (first final-expr) 'return-parser)
+                             (= (first final-expr) 'parser/return-parser)))
+                  ;; Уже парсер - используем как есть
+                  final-expr
+                  ;; Не парсер - оборачиваем в return-parser
+                  `(return-parser ~final-expr))
                 (let [[binding expr] (first pairs)
                       remaining-pairs (rest pairs)
                       ;; Генерируем уникальные символы для каждого уровня
                       state-sym (gensym "parser-state")
                       result-sym (gensym "parse-result")]
-                  (if (symbol? binding)
+                  (if (and (symbol? binding) (not= binding '_))
                     ;; Связывание результата с переменной
                     `(fn [~state-sym]
                        (let [~result-sym (~expr ~state-sym)]
                          (if (:success? ~result-sym)
                            (let [~binding (:value ~result-sym)
                                  next-state# (:state ~result-sym)]
-                             ((~(build-parser-chain remaining-pairs final-expr)) next-state#))
+                             (~(build-parser-chain remaining-pairs final-expr) next-state#))
                            ~result-sym)))
-                    ;; Игнорирование результата (binding не символ)
+                    ;; Игнорирование результата (binding это _ или не символ)
                     `(fn [~state-sym]
                        (let [~result-sym (~expr ~state-sym)]
                          (if (:success? ~result-sym)
-                           ((~(build-parser-chain remaining-pairs final-expr)) (:state ~result-sym))
+                           (~(build-parser-chain remaining-pairs final-expr) (:state ~result-sym))
                            ~result-sym)))))))]
       
       (build-parser-chain binding-pairs final-expr))))
@@ -1141,7 +1150,61 @@
 (defn >> 
   "Последовательная композиция парсеров с игнорированием первого результата"
   [parser1 parser2]
-  (>>= parser1 (constantly parser2)))
+  (fn [state]
+    (let [result1 (parser1 state)]
+      (if (:success? result1)
+        (parser2 (:state result1))
+        result1))))
+
+(defn <<
+  "Последовательная композиция парсеров с игнорированием второго результата"
+  [parser1 parser2]
+  (fn [state]
+    (let [result1 (parser1 state)]
+      (if (:success? result1)
+        (let [result2 (parser2 (:state result1))]
+          (if (:success? result2)
+            (success (:value result1) (:state result2))
+            result2))
+        result1))))
+
+(defn between
+  "Парсер, который парсит что-то между двумя другими парсерами"
+  [open-parser content-parser close-parser]
+  (fn [state]
+    (let [open-result (open-parser state)]
+      (if (:success? open-result)
+        (let [content-result (content-parser (:state open-result))]
+          (if (:success? content-result)
+            (let [close-result (close-parser (:state content-result))]
+              (if (:success? close-result)
+                (success (:value content-result) (:state close-result))
+                close-result))
+            content-result))
+        open-result))))
+
+(defn separated-by
+  "Парсер для списка элементов, разделенных сепаратором"
+  [element-parser separator-parser]
+  (fn [state]
+    ((choice
+       ;; Пустой список
+       (return-parser [])
+       ;; Непустой список
+       (fn [state]
+         (let [first-result (element-parser state)]
+           (if (:success? first-result)
+             (let [rest-result ((many (fn [state]
+                                       (let [sep-result (separator-parser state)]
+                                         (if (:success? sep-result)
+                                           (element-parser (:state sep-result))
+                                           sep-result))))
+                               (:state first-result))]
+               (if (:success? rest-result)
+                 (success (cons (:value first-result) (:value rest-result))
+                         (:state rest-result))
+                 rest-result))
+             first-result)))) state)))
 
 (defn sequence-parsers 
   "Последовательное применение списка парсеров, возвращает вектор результатов"
@@ -1169,7 +1232,93 @@
         (success nil (:state result))
         result))))
 
-(defn keep-result 
-  "Применяет парсер и сохраняет результат (identity для парсеров)"
-  [parser]
-  parser) 
+(defn transform
+  "Применяет функцию трансформации к результату парсера"
+  [parser transform-fn]
+  (fn [state]
+    (let [result (parser state)]
+      (if (:success? result)
+        (success (transform-fn (:value result)) (:state result))
+        result))))
+
+(defn with-error-context
+  "Добавляет контекст к ошибке парсера"
+  [parser context-msg]
+  (fn [state]
+    (let [result (parser state)]
+      (if (:success? result)
+        result
+        (failure (str context-msg ": " (:error result)) (:state result))))))
+
+;; Специализированные комбинаторы для C-синтаксиса
+(defn parenthesized
+  "Парсер для выражений в круглых скобках"
+  [content-parser]
+  (between (expect-token-value :open-round)
+           content-parser
+           (expect-token-value :close-round)))
+
+(defn braced
+  "Парсер для блоков в фигурных скобках"
+  [content-parser]
+  (between (expect-token-value :open-curly)
+           content-parser
+           (expect-token-value :close-curly)))
+
+(defn bracketed
+  "Парсер для выражений в квадратных скобках"
+  [content-parser]
+  (between (expect-token-value :open-square)
+           content-parser
+           (expect-token-value :close-square)))
+
+(defn comma-separated
+  "Парсер для списка элементов, разделенных запятыми"
+  [element-parser]
+  (separated-by element-parser (expect-token-value :comma)))
+
+(defn semicolon-terminated
+  "Парсер для выражений, завершающихся точкой с запятой"
+  [content-parser]
+  (<< content-parser (expect-token-value :semicolon)))
+
+;; ============================================================================
+;; ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+;; ============================================================================
+
+(defn make-success-parser 
+  "Создает парсер, который всегда возвращает успех с заданным значением
+   Полезно для финальных выражений в do-parse"
+  [value-fn]
+  (fn [state] 
+    (success (if (fn? value-fn) (value-fn) value-fn) state)))
+
+(defn wrap-parser 
+  "Оборачивает функцию в парсер, если она еще не является парсером"
+  [f]
+  (if (fn? f)
+    f
+    (fn [state] (f state))))
+
+(defn parse-expr 
+  "Вспомогательная функция для создания парсера выражений в do-parse"
+  []
+  (fn [state] (parse-expression state)))
+
+(defn parse-stmt 
+  "Вспомогательная функция для создания парсера операторов в do-parse"
+  []
+  (fn [state] (parse-statement state)))
+
+;; Макросы для упрощения создания парсеров
+(defmacro success-parser 
+  "Макрос для создания парсера успеха с выражением
+   Использование: (success-parser (expression-statement-node expr))"
+  [expr]
+  `(fn [state#] (success ~expr state#)))
+
+(defmacro parser-fn 
+  "Макрос для создания парсера из функции
+   Использование: (parser-fn parse-expression)"
+  [f]
+  `(fn [state#] (~f state#))) 
