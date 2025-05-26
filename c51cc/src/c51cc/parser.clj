@@ -434,357 +434,273 @@
               expr-result))
           open-result)))) state))
 
-(defn parse-postfix-expression 
-  "Парсит постфиксные выражения: вызовы функций, индексация массивов, постфиксные ++/--"
+;; Вспомогательные функции для parse-postfix-expression
+(defn parse-function-call-args
+  "Парсит аргументы вызова функции в скобках"
   [state]
-  (let [primary-result (parse-primary-expression state)]
-    (if (:success? primary-result)
-      (loop [expr (:value primary-result)
-             current-state (:state primary-result)]
-        (let [token-result (current-token current-state)]
-          (if (:success? token-result)
-            (let [token (:value token-result)]
-              (cond
-                ;; Постфиксный инкремент
-                (and (= (:type token) :math-operator) (= (:value token) :increment))
-                (let [advance-result (advance current-state)]
-                  (if (:success? advance-result)
-                    (recur (unary-expression-node :post-increment expr)
-                           (:state advance-result))
-                    advance-result))
-                
-                ;; Постфиксный декремент
-                (and (= (:type token) :math-operator) (= (:value token) :decrement))
-                (let [advance-result (advance current-state)]
-                  (if (:success? advance-result)
-                    (recur (unary-expression-node :post-decrement expr)
-                           (:state advance-result))
-                    advance-result))
-                
-                ;; Вызов функции
-                (= (:value token) :open-round)
-                (let [advance-result (advance current-state)]
-                  (if (:success? advance-result)
-                    ;; Проверяем, есть ли аргументы
-                    (let [peek-result (current-token (:state advance-result))]
-                      (if (and (:success? peek-result) 
-                               (= (:value (:value peek-result)) :close-round))
-                        ;; Пустой список аргументов
-                        (let [close-result ((expect-token-value :close-round) (:state advance-result))]
-                          (if (:success? close-result)
-                            (recur (call-expression-node expr [])
-                                   (:state close-result))
-                            close-result))
-                        ;; Есть аргументы - парсим их
-                        (let [first-arg-result (parse-expression (:state advance-result))]
-                          (if (:success? first-arg-result)
-                            ;; Собираем остальные аргументы
-                            (let [args-result 
-                                  (loop [args [(:value first-arg-result)]
-                                         arg-state (:state first-arg-result)]
-                                    (let [token-result (current-token arg-state)]
-                                      (if (and (:success? token-result)
-                                               (= (:value (:value token-result)) :comma))
-                                        ;; Есть запятая, парсим следующий аргумент
-                                        (let [advance-result (advance arg-state)]
-                                          (if (:success? advance-result)
-                                            (let [arg-result (parse-expression (:state advance-result))]
-                                              (if (:success? arg-result)
-                                                (recur (conj args (:value arg-result))
-                                                       (:state arg-result))
-                                                arg-result))
-                                            advance-result))
-                                        ;; Нет запятой, возвращаем собранные аргументы
-                                        (success args arg-state))))]
-                              (if (:success? args-result)
-                                ;; Ожидаем закрывающую скобку
-                                (let [close-result ((expect-token-value :close-round) (:state args-result))]
-                                  (if (:success? close-result)
-                                    (recur (call-expression-node expr (:value args-result))
-                                           (:state close-result))
-                                    close-result))
-                                args-result))
-                            first-arg-result))))
-                    advance-result))
-                
-                ;; Индексация массива
-                (= (:value token) :open-square)
-                (let [advance-result (advance current-state)]
-                  (if (:success? advance-result)
-                    (let [index-result (parse-expression (:state advance-result))]
-                      (if (:success? index-result)
-                        (let [close-result ((expect-token-value :close-square) (:state index-result))]
-                          (if (:success? close-result)
-                            (recur (binary-expression-node :array-access 
-                                                          expr (:value index-result))
-                                   (:state close-result))
-                            close-result))
-                        index-result))
-                    advance-result))
-                
-                :else (success expr current-state)))
-            (success expr current-state))))
-      primary-result)))
+  ((do-parse
+     _ (expect-token-value :open-round)
+     arguments (optional (do-parse
+                      first-argument parse-expression
+                      rest-arguments (many (do-parse
+                                        _ (expect-token-value :comma)
+                                        argument parse-expression
+                                        (return-parser argument)))
+                      (return-parser (cons first-argument rest-arguments))))
+     _ (expect-token-value :close-round)
+     (return-parser (or arguments []))) state))
+
+(defn parse-array-index
+  "Парсит индекс массива в квадратных скобках"
+  [state]
+  ((do-parse
+     _ (expect-token-value :open-square)
+     array-index parse-expression
+     _ (expect-token-value :close-square)
+     (return-parser array-index)) state))
+
+(defn apply-postfix-operators
+  "Применяет постфиксные операторы к базовому выражению"
+  [base-expr state]
+  (loop [expr base-expr
+         current-state state]
+    (let [token-result (current-token current-state)]
+      (if (:success? token-result)
+        (let [token (:value token-result)]
+          (cond
+            ;; Постфиксный инкремент
+            (and (= (:type token) :math-operator) (= (:value token) :increment))
+            (let [advance-result (advance current-state)]
+              (if (:success? advance-result)
+                (recur (unary-expression-node :post-increment expr)
+                       (:state advance-result))
+                advance-result))
+            
+            ;; Постфиксный декремент
+            (and (= (:type token) :math-operator) (= (:value token) :decrement))
+            (let [advance-result (advance current-state)]
+              (if (:success? advance-result)
+                (recur (unary-expression-node :post-decrement expr)
+                       (:state advance-result))
+                advance-result))
+            
+            ;; Вызов функции
+            (= (:value token) :open-round)
+            (let [args-result (parse-function-call-args current-state)]
+              (if (:success? args-result)
+                (recur (call-expression-node expr (:value args-result))
+                       (:state args-result))
+                args-result))
+            
+            ;; Индексация массива
+            (= (:value token) :open-square)
+            (let [index-result (parse-array-index current-state)]
+              (if (:success? index-result)
+                (recur (binary-expression-node :array-access 
+                                              expr (:value index-result))
+                       (:state index-result))
+                index-result))
+            
+            :else (success expr current-state)))
+        (success expr current-state)))))
+
+(defn parse-postfix-expression 
+  "Парсит постфиксные выражения: вызовы функций, индексация массивов, постфиксные ++/--
+   Рефакторинг с использованием do-parse макроса и вспомогательных функций"
+  [state]
+  ((do-parse
+     primary parse-primary-expression
+     final-expr (fn [state] (apply-postfix-operators primary state))
+     (return-parser final-expr)) state))
 
 (defn parse-unary-expression 
-  "Парсит унарные выражения: !, ~, +, -, ++, --"
+  "Парсит унарные выражения: !, ~, +, -, ++, --
+   Рефакторинг с использованием do-parse макроса для улучшения читаемости"
   [state]
   ((choice
-    ;; Унарные операторы
-    (fn [state]
-      ((choice
-        (fn [state]
-          (let [op-result ((expect-token-value :not) state)]
-            (if (:success? op-result)
-              (let [expr-result (parse-unary-expression (:state op-result))]
-                (if (:success? expr-result)
-                  ;; Извлекаем значение оператора из токена лексера
-                  (success (unary-expression-node (:value (:value op-result)) (:value expr-result)) 
-                          (:state expr-result))
-                  expr-result))
-              op-result)))
-        
-        (fn [state]
-          (let [op-result ((expect-token-value :plus) state)]
-            (if (:success? op-result)
-              (let [expr-result (parse-unary-expression (:state op-result))]
-                (if (:success? expr-result)
-                  ;; Извлекаем значение оператора из токена лексера
-                  (success (unary-expression-node (:value (:value op-result)) (:value expr-result)) 
-                          (:state expr-result))
-                  expr-result))
-              op-result)))
-        
-        (fn [state]
-          (let [op-result ((expect-token-value :minus) state)]
-            (if (:success? op-result)
-              (let [expr-result (parse-unary-expression (:state op-result))]
-                (if (:success? expr-result)
-                  ;; Извлекаем значение оператора из токена лексера
-                  (success (unary-expression-node (:value (:value op-result)) (:value expr-result)) 
-                          (:state expr-result))
-                  expr-result))
-              op-result)))
-        
-        (fn [state]
-          (let [op-result ((expect-token-value :increment) state)]
-            (if (:success? op-result)
-              (let [expr-result (parse-unary-expression (:state op-result))]
-                (if (:success? expr-result)
-                  ;; Извлекаем значение оператора из токена лексера
-                  (success (unary-expression-node (:value (:value op-result)) (:value expr-result)) 
-                          (:state expr-result))
-                  expr-result))
-              op-result)))
-        
-        (fn [state]
-          (let [op-result ((expect-token-value :decrement) state)]
-            (if (:success? op-result)
-              (let [expr-result (parse-unary-expression (:state op-result))]
-                (if (:success? expr-result)
-                  ;; Извлекаем значение оператора из токена лексера
-                  (success (unary-expression-node (:value (:value op-result)) (:value expr-result)) 
-                          (:state expr-result))
-                  expr-result))
-              op-result)))) state))
+    ;; Унарный оператор NOT
+    (do-parse
+      operator (expect-token-value :not)
+      expression parse-unary-expression
+      (return-parser (unary-expression-node (:value operator) expression)))
     
-    ;; Постфиксные выражения
+    ;; Унарный оператор PLUS
+    (do-parse
+      operator (expect-token-value :plus)
+      expression parse-unary-expression
+      (return-parser (unary-expression-node (:value operator) expression)))
+    
+    ;; Унарный оператор MINUS
+    (do-parse
+      operator (expect-token-value :minus)
+      expression parse-unary-expression
+      (return-parser (unary-expression-node (:value operator) expression)))
+    
+    ;; Префиксный инкремент
+    (do-parse
+      operator (expect-token-value :increment)
+      expression parse-unary-expression
+      (return-parser (unary-expression-node (:value operator) expression)))
+    
+    ;; Префиксный декремент
+    (do-parse
+      operator (expect-token-value :decrement)
+      expression parse-unary-expression
+      (return-parser (unary-expression-node (:value operator) expression)))
+    
+    ;; Постфиксные выражения (базовый случай)
     parse-postfix-expression) state))
 
-;; Парсеры для бинарных операторов с учетом приоритета
-(defn parse-multiplicative-expression [state]
-  (let [left-result (parse-unary-expression state)]
-    (if (:success? left-result)
-      (loop [left (:value left-result)
-             current-state (:state left-result)]
-        (let [token-result (current-token current-state)]
-          (if (:success? token-result)
-            (let [token (:value token-result)]
-              ;; Проверяем значение токена из лексера
-              (if (#{:multiply :divide :modulo} (:value token))
-                (let [advance-result (advance current-state)]
-                  (if (:success? advance-result)
-                    (let [right-result (parse-unary-expression (:state advance-result))]
-                      (if (:success? right-result)
-                        ;; Используем значение оператора из токена лексера
-                        (recur (binary-expression-node (:value token) 
-                                                      left (:value right-result))
-                               (:state right-result))
-                        right-result))
-                    advance-result))
-                (success left current-state)))
-            (success left current-state))))
-      left-result)))
+;; Вспомогательные функции для левоассоциативных бинарных операторов с do-parse
+(defn parse-binary-expression-with-operators
+  "Универсальная функция для парсинга левоассоциативных бинарных выражений
+   Принимает парсер операндов и предикат для проверки операторов"
+  [operand-parser operator-predicate]
+  (fn [state]
+    ((do-parse
+       left-operand operand-parser
+       final-expr (fn [state]
+                   (loop [left left-operand
+                          current-state state]
+                     (let [token-check (current-token current-state)]
+                       (if (:success? token-check)
+                         (let [token (:value token-check)]
+                           (if (operator-predicate token)
+                             (let [advance-check (advance current-state)]
+                               (if (:success? advance-check)
+                                 (let [right-check (operand-parser (:state advance-check))]
+                                   (if (:success? right-check)
+                                     (recur (binary-expression-node (:value token)
+                                                                   left (:value right-check))
+                                            (:state right-check))
+                                     right-check))
+                                 advance-check))
+                             (success left current-state)))
+                         (success left current-state)))))
+       (return-parser final-expr)) state)))
 
-(defn parse-shift-expression [state]
-  (let [left-result (parse-multiplicative-expression state)]
-    (if (:success? left-result)
-      (loop [left (:value left-result)
-             current-state (:state left-result)]
-        (let [token-result (current-token current-state)]
-          (if (:success? token-result)
-            (let [token (:value token-result)]
-              ;; Проверяем операторы сдвига
-              (if (and (= (:type token) :bitwise-operator) 
-                       (#{:shift-left :shift-right} (:value token)))
-                (let [advance-result (advance current-state)]
-                  (if (:success? advance-result)
-                    (let [right-result (parse-multiplicative-expression (:state advance-result))]
-                      (if (:success? right-result)
-                        ;; Используем значение оператора из токена лексера
-                        (recur (binary-expression-node (:value token) 
-                                                      left (:value right-result))
-                               (:state right-result))
-                        right-result))
-                    advance-result))
-                (success left current-state)))
-            (success left current-state))))
-      left-result)))
+;; Предикаты для различных типов операторов
+(defn multiplicative-operator?
+  "Проверяет, является ли токен мультипликативным оператором"
+  [token]
+  (#{:multiply :divide :modulo} (:value token)))
 
-(defn parse-additive-expression [state]
-  (let [left-result (parse-shift-expression state)]
-    (if (:success? left-result)
-      (loop [left (:value left-result)
-             current-state (:state left-result)]
-        (let [token-result (current-token current-state)]
-          (if (:success? token-result)
-            (let [token (:value token-result)]
-              ;; Проверяем значение токена из лексера
-              (if (#{:plus :minus} (:value token))
-                (let [advance-result (advance current-state)]
-                  (if (:success? advance-result)
-                    (let [right-result (parse-shift-expression (:state advance-result))]
-                      (if (:success? right-result)
-                        ;; Используем значение оператора из токена лексера
-                        (recur (binary-expression-node (:value token) 
-                                                      left (:value right-result))
-                               (:state right-result))
-                        right-result))
-                    advance-result))
-                (success left current-state)))
-            (success left current-state))))
-      left-result)))
+(defn shift-operator? 
+  "Проверяет, является ли токен оператором сдвига"
+  [token]
+  (and (= (:type token) :bitwise-operator)
+       (#{:shift-left :shift-right} (:value token))))
 
-(defn parse-relational-expression [state]
-  (let [left-result (parse-additive-expression state)]
-    (if (:success? left-result)
-      (loop [left (:value left-result)
-             current-state (:state left-result)]
-        (let [token-result (current-token current-state)]
-          (if (:success? token-result)
-            (let [token (:value token-result)]
-              ;; Проверяем значение токена из лексера
-              (if (#{:less :greater :less-equal :greater-equal} (:value token))
-                (let [advance-result (advance current-state)]
-                  (if (:success? advance-result)
-                    (let [right-result (parse-additive-expression (:state advance-result))]
-                      (if (:success? right-result)
-                        ;; Используем значение оператора из токена лексера
-                        (recur (binary-expression-node (:value token) 
-                                                      left (:value right-result))
-                               (:state right-result))
-                        right-result))
-                    advance-result))
-                (success left current-state)))
-            (success left current-state))))
-      left-result)))
+(defn additive-operator?
+  "Проверяет, является ли токен аддитивным оператором"
+  [token]
+  (#{:plus :minus} (:value token)))
 
-(defn parse-equality-expression [state]
-  (let [left-result (parse-relational-expression state)]
-    (if (:success? left-result)
-      (loop [left (:value left-result)
-             current-state (:state left-result)]
-        (let [token-result (current-token current-state)]
-          (if (:success? token-result)
-            (let [token (:value token-result)]
-              ;; Проверяем значение токена из лексера - нужно учесть, что == это :equal в logical-operator
-              (if (or (and (= (:type token) :logical-operator) (= (:value token) :equal))
-                      (and (= (:type token) :comparison-operator) (= (:value token) :not-equal)))
-                (let [advance-result (advance current-state)]
-                  (if (:success? advance-result)
-                    (let [right-result (parse-relational-expression (:state advance-result))]
-                      (if (:success? right-result)
-                        ;; Используем значение оператора из токена лексера
-                        (recur (binary-expression-node (:value token) 
-                                                      left (:value right-result))
-                               (:state right-result))
-                        right-result))
-                    advance-result))
-                (success left current-state)))
-            (success left current-state))))
-      left-result)))
+(defn relational-operator?
+  "Проверяет, является ли токен оператором сравнения"
+  [token]
+  (#{:less :greater :less-equal :greater-equal} (:value token)))
 
-(defn parse-logical-and-expression [state]
-  (let [left-result (parse-equality-expression state)]
-    (if (:success? left-result)
-      (loop [left (:value left-result)
-             current-state (:state left-result)]
-        (let [token-result (current-token current-state)]
-          (if (:success? token-result)
-            (let [token (:value token-result)]
-              ;; Проверяем логическое И
-              (if (and (= (:type token) :logical-operator) (= (:value token) :and))
-                (let [advance-result (advance current-state)]
-                  (if (:success? advance-result)
-                    (let [right-result (parse-equality-expression (:state advance-result))]
-                      (if (:success? right-result)
-                        ;; Используем значение оператора из токена лексера
-                        (recur (binary-expression-node (:value token) 
-                                                      left (:value right-result))
-                               (:state right-result))
-                        right-result))
-                    advance-result))
-                (success left current-state)))
-            (success left current-state))))
-      left-result)))
+(defn equality-operator?
+  "Проверяет, является ли токен оператором равенства"
+  [token]
+  (or (and (= (:type token) :logical-operator) (= (:value token) :equal))
+      (and (= (:type token) :comparison-operator) (= (:value token) :not-equal))))
 
-(defn parse-logical-or-expression [state]
-  (let [left-result (parse-logical-and-expression state)]
-    (if (:success? left-result)
-      (loop [left (:value left-result)
-             current-state (:state left-result)]
-        (let [token-result (current-token current-state)]
-          (if (:success? token-result)
-            (let [token (:value token-result)]
-              ;; Проверяем логическое ИЛИ
-              (if (and (= (:type token) :logical-operator) (= (:value token) :or))
-                (let [advance-result (advance current-state)]
-                  (if (:success? advance-result)
-                    (let [right-result (parse-logical-and-expression (:state advance-result))]
-                      (if (:success? right-result)
-                        ;; Используем значение оператора из токена лексера
-                        (recur (binary-expression-node (:value token) 
-                                                      left (:value right-result))
-                               (:state right-result))
-                        right-result))
-                    advance-result))
-                (success left current-state)))
-            (success left current-state))))
-      left-result)))
+(defn logical-and-operator?
+  "Проверяет, является ли токен оператором логического И"
+  [token]
+  (and (= (:type token) :logical-operator) (= (:value token) :and)))
 
-(defn parse-assignment-expression [state]
-  (let [left-result (parse-logical-or-expression state)]
-    (if (:success? left-result)
-      (let [token-result (current-token (:state left-result))]
-        (if (:success? token-result)
-          (let [token (:value token-result)]
-            ;; Проверяем операторы присваивания
-            (if (and (= (:type token) :assignment-operator) 
-                     (#{:equal :plus-equal :minus-equal :and-equal :or-equal :xor-equal :shift-left-equal :shift-right-equal} (:value token)))
-              (let [advance-result (advance (:state left-result))]
-                (if (:success? advance-result)
-                  (let [right-result (parse-assignment-expression (:state advance-result))]
-                    (if (:success? right-result)
-                      ;; Используем значение оператора из токена лексера
-                      (success (assignment-expression-node (:value token)
-                                                          (:value left-result)
-                                                          (:value right-result))
-                              (:state right-result))
-                      right-result))
-                  advance-result))
-              (success (:value left-result) (:state left-result))))
-          (success (:value left-result) (:state left-result))))
-      left-result)))
+(defn logical-or-operator?
+  "Проверяет, является ли токен оператором логического ИЛИ"
+  [token]
+  (and (= (:type token) :logical-operator) (= (:value token) :or)))
+
+;; Рефакторинговые версии функций с использованием do-parse
+(defn parse-multiplicative-expression 
+  "Парсит мультипликативные выражения: *, /, %
+   Рефакторинг с использованием do-parse макроса и вспомогательных функций"
+  [state]
+  ((parse-binary-expression-with-operators parse-unary-expression 
+                                          multiplicative-operator?) state))
+
+(defn parse-shift-expression 
+  "Парсит выражения сдвига: <<, >>
+   Рефакторинг с использованием do-parse макроса и вспомогательных функций"
+  [state]
+  ((parse-binary-expression-with-operators parse-multiplicative-expression 
+                                          shift-operator?) state))
+
+(defn parse-additive-expression 
+  "Парсит аддитивные выражения: +, -
+   Рефакторинг с использованием do-parse макроса и вспомогательных функций"
+  [state]
+  ((parse-binary-expression-with-operators parse-shift-expression 
+                                          additive-operator?) state))
+
+(defn parse-relational-expression 
+  "Парсит выражения сравнения: <, >, <=, >=
+   Рефакторинг с использованием do-parse макроса и вспомогательных функций"
+  [state]
+  ((parse-binary-expression-with-operators parse-additive-expression 
+                                          relational-operator?) state))
+
+(defn parse-equality-expression 
+  "Парсит выражения равенства: ==, !=
+   Рефакторинг с использованием do-parse макроса и вспомогательных функций"
+  [state]
+  ((parse-binary-expression-with-operators parse-relational-expression 
+                                          equality-operator?) state))
+
+(defn parse-logical-and-expression 
+  "Парсит выражения логического И: &&
+   Рефакторинг с использованием do-parse макроса и вспомогательных функций"
+  [state]
+  ((parse-binary-expression-with-operators parse-equality-expression 
+                                          logical-and-operator?) state))
+
+(defn parse-logical-or-expression 
+  "Парсит выражения логического ИЛИ: ||
+   Рефакторинг с использованием do-parse макроса и вспомогательных функций"
+  [state]
+  ((parse-binary-expression-with-operators parse-logical-and-expression 
+                                          logical-or-operator?) state))
+
+;; Предикат для операторов присваивания
+(defn assignment-operator?
+  "Проверяет, является ли токен оператором присваивания"
+  [token]
+  (and (= (:type token) :assignment-operator)
+       (#{:equal :plus-equal :minus-equal :and-equal :or-equal :xor-equal :shift-left-equal :shift-right-equal} (:value token))))
+
+(defn parse-assignment-expression 
+  "Парсит выражения присваивания с правой ассоциативностью
+   Рефакторинг с использованием do-parse макроса для улучшения читаемости"
+  [state]
+  ((do-parse
+     left-expr parse-logical-or-expression
+     final-expr (fn [state]
+                 (let [token-check (current-token state)]
+                   (if (:success? token-check)
+                     (let [token (:value token-check)]
+                       (if (assignment-operator? token)
+                         ;; Найден оператор присваивания - парсим правую часть
+                         (let [advance-check (advance state)]
+                           (if (:success? advance-check)
+                             (let [right-check (parse-assignment-expression (:state advance-check))]
+                               (if (:success? right-check)
+                                 (success (assignment-expression-node (:value token)
+                                                                     left-expr
+                                                                     (:value right-check))
+                                         (:state right-check))
+                                 right-check))
+                             advance-check))
+                         ;; Нет оператора присваивания - возвращаем левое выражение
+                         (success left-expr state)))
+                     ;; Ошибка при получении токена
+                     (success left-expr state))))
+     (return-parser final-expr)) state))
 
 (defn parse-expression [state]
   (parse-assignment-expression state))
@@ -797,22 +713,18 @@
          parse-variable-declaration parse-type-specifier)
 
 (defn parse-type-specifier 
-  "Парсит спецификатор типа: [signed|unsigned] [int|char|void]"
+  "Парсит спецификатор типа: [signed|unsigned] [int|char|void]
+   Рефакторинг с использованием do-parse макроса для улучшения читаемости"
   [state]
-  (let [signedness-result ((optional (choice (expect-token-value :signed)
-                                            (expect-token-value :unsigned))) state)]
-    (if (:success? signedness-result)
-      (let [base-type-result ((choice (expect-token-value :void)
-                                     (expect-token-value :int)
-                                     (expect-token-value :char)) 
-                             (:state signedness-result))]
-        (if (:success? base-type-result)
-          (success {:signedness (when (:value signedness-result) 
-                                 (:value (:value signedness-result)))
-                   :base-type (:value (:value base-type-result))}
-                  (:state base-type-result))
-          base-type-result))
-      signedness-result)))
+  ((do-parse
+     signedness (optional (choice (expect-token-value :signed)
+                                 (expect-token-value :unsigned)))
+     base-type (choice (expect-token-value :void)
+                      (expect-token-value :int)
+                      (expect-token-value :char))
+     (return-parser {:signedness (when signedness 
+                                  (:value signedness))
+                    :base-type (:value base-type)})) state))
 
 (defn parse-parameter-list 
   "Парсит список параметров функции. Обрабатывает специальный случай void"
