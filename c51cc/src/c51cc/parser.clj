@@ -400,39 +400,26 @@
          parse-postfix-expression parse-primary-expression)
 
 (defn parse-primary-expression 
-  "Парсит первичные выражения: идентификаторы, литералы, выражения в скобках"
+  "Парсит первичные выражения: идентификаторы, литералы, выражения в скобках
+   ОТРЕФАКТОРЕНО: Использует do-parse макрос для улучшения читаемости и уменьшения вложенности"
   [state]
   ((choice
-    ;; Числовые литералы
-    (fn [state]
-      (let [token-result ((expect-token :number) state)]
-        (if (:success? token-result)
-          (let [token (:value token-result)]
-            ;; Извлекаем значение из токена лексера
-            (success (literal-node (:value token) :number) (:state token-result)))
-          token-result)))
+    ;; Числовые литералы - отрефакторено с do-parse
+    (do-parse
+      number-token (expect-token :number)
+      (return-parser (literal-node (:value number-token) :number)))
     
-    ;; Идентификаторы
-    (fn [state]
-      (let [token-result ((expect-token :identifier) state)]
-        (if (:success? token-result)
-          (let [token (:value token-result)]
-            ;; Извлекаем значение из токена лексера
-            (success (identifier-node (:value token)) (:state token-result)))
-          token-result)))
+    ;; Идентификаторы - отрефакторено с do-parse  
+    (do-parse
+      identifier-token (expect-token :identifier)
+      (return-parser (identifier-node (:value identifier-token))))
     
-    ;; Выражения в скобках
-    (fn [state]
-      (let [open-result ((expect-token-value :open-round) state)]
-        (if (:success? open-result)
-          (let [expr-result (parse-expression (:state open-result))]
-            (if (:success? expr-result)
-              (let [close-result ((expect-token-value :close-round) (:state expr-result))]
-                (if (:success? close-result)
-                  (success (:value expr-result) (:state close-result))
-                  close-result))
-              expr-result))
-          open-result)))) state))
+    ;; Выражения в скобках - отрефакторено с do-parse
+    (do-parse
+      open-paren (expect-token-value :open-round)
+      expression parse-expression
+      close-paren (expect-token-value :close-round)
+      (return-parser expression))) state))
 
 ;; Вспомогательные функции для parse-postfix-expression
 (defn parse-function-call-args
@@ -726,73 +713,50 @@
                                   (:value signedness))
                     :base-type (:value base-type)})) state))
 
-(defn parse-parameter-list 
-  "Парсит список параметров функции. Обрабатывает специальный случай void"
+(defn parse-single-parameter
+  "Парсит один параметр функции: тип + имя
+   ОТРЕФАКТОРЕНО: Использует do-parse для упрощения логики"
   [state]
-  ;; Сначала проверяем специальный случай: одиночный void
-  (let [current-token-result (current-token state)]
-    (if (and (:success? current-token-result)
-             (= (:type (:value current-token-result)) :type-keyword)
-             (= (:base-type (:value current-token-result)) :void))
-      ;; Если это void, потребляем токен и возвращаем пустой список параметров
-      (let [advance-result (advance state)]
-        (if (:success? advance-result)
-          (success [] (:state advance-result))
-          advance-result))
-      ;; Иначе пробуем парсить обычный список параметров
-      (let [type-result (parse-type-specifier state)]
-        (if (:success? type-result)
-          ;; Если тип найден, пробуем парсить имя
-          (let [name-result ((expect-token :identifier) (:state type-result))]
-            (if (:success? name-result)
-              ;; Если имя найдено, парсим остальные параметры
-              (let [first-param {:type (:value type-result) 
-                                :name (:value (:value name-result))}
-                    rest-result ((many (fn [state]
-                                        (let [comma-result ((expect-token-value :comma) state)]
-                                          (if (:success? comma-result)
-                                            (let [type-result (parse-type-specifier (:state comma-result))]
-                                              (if (:success? type-result)
-                                                (let [name-result ((expect-token :identifier) (:state type-result))]
-                                                  (if (:success? name-result)
-                                                    (success {:type (:value type-result) 
-                                                             :name (:value (:value name-result))}
-                                                            (:state name-result))
-                                                    name-result))
-                                                type-result))
-                                            comma-result))))
-                                (:state name-result))]
-                (if (:success? rest-result)
-                  (success (cons first-param (:value rest-result))
-                          (:state rest-result))
-                  rest-result))
-              ;; Если имя не найдено, возвращаем ошибку
-              name-result))
-          ;; Если тип не найден, возвращаем пустой список (нет параметров)
-          (success [] state))))))
+  ((do-parse
+     param-type parse-type-specifier
+     param-name (expect-token :identifier)
+     (return-parser {:type param-type 
+                    :name (extract-identifier-name param-name)})) state))
+
+(defn parse-parameter-list 
+  "Парсит список параметров функции. Обрабатывает специальный случай void
+   ОТРЕФАКТОРЕНО: Использует do-parse и choice для упрощения сложной логики"
+  [state]
+  ((choice
+    ;; Специальный случай: одиночный void
+    (do-parse
+      void-token (expect-token-value :void)
+      (return-parser []))
+    
+    ;; Пустой список параметров
+    (return-parser [])
+    
+    ;; Непустой список параметров
+    (do-parse
+      first-param parse-single-parameter
+      rest-params (many (do-parse
+                          comma-token (expect-token-value :comma)
+                          param parse-single-parameter
+                          (return-parser param)))
+      (return-parser (cons first-param rest-params)))) state))
 
 (defn parse-block-statement 
   "Парсит блок операторов в фигурных скобках
    В соответствии с C89/C90: объявления переменных в начале блока,
-   затем операторы (смешивание запрещено)"
+   затем операторы (смешивание запрещено)
+   ОТРЕФАКТОРЕНО: Использует do-parse для упрощения последовательной логики"
   [state]
-  (let [open-result ((expect-token-value :open-curly) state)]
-    (if (:success? open-result)
-      ;; Сначала парсим все объявления переменных
-      (let [declarations-result ((many parse-variable-declaration) (:state open-result))]
-        (if (:success? declarations-result)
-          ;; Затем парсим все операторы
-          (let [statements-result ((many parse-statement) (:state declarations-result))]
-            (if (:success? statements-result)
-              (let [close-result ((expect-token-value :close-curly) (:state statements-result))]
-                (if (:success? close-result)
-                  ;; Объединяем объявления и операторы в один список
-                  (success (block-statement-node (concat (:value declarations-result) (:value statements-result))) 
-                          (:state close-result))
-                  close-result))
-              statements-result))
-          declarations-result))
-      open-result)))
+  ((do-parse
+     open-brace (expect-token-value :open-curly)
+     declarations (many parse-variable-declaration)
+     statements (many parse-statement)
+     close-brace (expect-token-value :close-curly)
+     (return-parser (block-statement-node (concat declarations statements)))) state))
 
 (defn parse-if-statement 
   "Парсит условный оператор if с использованием do-parse макроса"
@@ -880,61 +844,45 @@
     parse-return-statement
     parse-expression-statement) state))
 
-(defn parse-function-declaration 
-  "Парсит объявление функции с поддержкой C51-специфичных модификаторов interrupt и using"
+(defn parse-function-body-or-semicolon
+  "Парсит тело функции (блок) или точку с запятой для объявления
+   ОТРЕФАКТОРЕНО: Использует do-parse и choice для упрощения логики"
   [state]
-  (let [type-result (parse-type-specifier state)]
-    (if (:success? type-result)
-      (let [name-result ((expect-token :identifier) (:state type-result))]
-        (if (:success? name-result)
-          (let [open-result ((expect-token-value :open-round) (:state name-result))]
-            (if (:success? open-result)
-              (let [params-result (parse-parameter-list (:state open-result))]
-                (if (:success? params-result)
-                  (let [close-result ((expect-token-value :close-round) (:state params-result))]
-                    (if (:success? close-result)
-                      ;; Парсим C51-специфичные модификаторы (interrupt N [using M])
-                      (let [modifiers-result (parse-c51-function-modifiers (:state close-result))]
-                        (if (:success? modifiers-result)
-                          ;; Пробуем парсить тело функции или точку с запятой
-                          (let [body-or-semi-result 
-                                ((choice 
-                                  ;; Определение функции с телом
-                                  (fn [state]
-                                    (let [body-result (parse-block-statement state)]
-                                      (if (:success? body-result)
-                                        (success {:has-body true :body (:value body-result)} (:state body-result))
-                                        body-result)))
-                                  ;; Объявление функции с точкой с запятой
-                                  (fn [state]
-                                    (let [semi-result ((expect-token-value :semicolon) state)]
-                                      (if (:success? semi-result)
-                                        (success {:has-body false :body nil} (:state semi-result))
-                                        semi-result))))
-                                 (:state modifiers-result))]
-                            (if (:success? body-or-semi-result)
-                              (let [result-data (:value body-or-semi-result)
-                                    modifiers (:value modifiers-result)]
-                                ;; Если есть interrupt модификатор, создаем interrupt-declaration-node
-                                (if (:interrupt-number modifiers)
-                                  (success (interrupt-declaration-node 
-                                           (extract-identifier-name (:value name-result))
-                                           (:interrupt-number modifiers)
-                                           (:using-clause modifiers))
-                                          (:state body-or-semi-result))
-                                  ;; Иначе создаем обычный function-declaration-node
-                                  (success (function-declaration-node (:value type-result) 
-                                                                     (extract-identifier-name (:value name-result)) 
-                                                                     (:value params-result) 
-                                                                     (:body result-data))
-                                          (:state body-or-semi-result))))
-                              body-or-semi-result))
-                          modifiers-result))
-                      close-result))
-                  params-result))
-              open-result))
-          name-result))
-      type-result)))
+  ((choice
+    ;; Определение функции с телом
+    (do-parse
+      body parse-block-statement
+      (return-parser {:has-body true :body body}))
+    
+    ;; Объявление функции с точкой с запятой
+    (do-parse
+      semicolon-token (expect-token-value :semicolon)
+      (return-parser {:has-body false :body nil}))) state))
+
+(defn parse-function-declaration
+  "Парсит объявление функции с поддержкой C51-специфичных модификаторов interrupt и using
+   ОТРЕФАКТОРЕНО: Использует do-parse для кардинального упрощения сложной логики"
+  [state]
+  ((do-parse
+     return-type parse-type-specifier
+     function-name (expect-token :identifier)
+     open-paren (expect-token-value :open-round)
+     parameters parse-parameter-list
+     close-paren (expect-token-value :close-round)
+     modifiers parse-c51-function-modifiers
+     body-info parse-function-body-or-semicolon
+     (return-parser 
+       (if (:interrupt-number modifiers)
+         ;; Создаем interrupt-declaration-node для C51
+         (interrupt-declaration-node 
+           (extract-identifier-name function-name)
+           (:interrupt-number modifiers)
+           (:using-clause modifiers))
+         ;; Создаем обычный function-declaration-node
+         (function-declaration-node return-type 
+                                   (extract-identifier-name function-name) 
+                                   parameters 
+                                   (:body body-info))))) state))
 
 (defn parse-declaration 
   "Парсит любое объявление или оператор на верхнем уровне программы
@@ -963,12 +911,12 @@
           expr-result)))) state))
 
 (defn parse-program 
-  "Парсит всю программу"
+  "Парсит всю программу
+   ОТРЕФАКТОРЕНО: Использует do-parse для упрощения логики"
   [state]
-  (let [declarations-result ((many parse-declaration) state)]
-    (if (:success? declarations-result)
-      (success (program-node (:value declarations-result)) (:state declarations-result))
-      declarations-result)))
+  ((do-parse
+     declarations (many parse-declaration)
+     (return-parser (program-node declarations))) state))
 
 ;; ============================================================================
 ;; ОСНОВНАЯ ФУНКЦИЯ ПАРСИНГА
@@ -1259,37 +1207,20 @@
 ;; Добавляем парсер для C51-специфичных модификаторов функций
 (defn parse-c51-function-modifiers
   "Парсит C51-специфичные модификаторы функций: interrupt N [using M]
-   Возвращает карту с :interrupt-number и :using-clause (может быть nil)"
+   Возвращает карту с :interrupt-number и :using-clause (может быть nil)
+   ОТРЕФАКТОРЕНО: Использует do-parse для упрощения сложной логики с optional"
   [state]
-  ;; Пробуем парсить interrupt модификатор
-  (let [interrupt-result ((optional 
-                          (fn [state]
-                            (let [interrupt-token ((expect-token-value :interrupt) state)]
-                              (if (:success? interrupt-token)
-                                (let [number-token ((expect-token :number) (:state interrupt-token))]
-                                  (if (:success? number-token)
-                                    (success (:value (:value number-token)) (:state number-token))
-                                    number-token))
-                                interrupt-token))))
-                         state)]
-    (if (:success? interrupt-result)
-      ;; Пробуем парсить using модификатор
-      (let [using-result ((optional
-                          (fn [state]
-                            (let [using-token ((expect-token-value :using) state)]
-                              (if (:success? using-token)
-                                (let [number-token ((expect-token :number) (:state using-token))]
-                                  (if (:success? number-token)
-                                    (success (:value (:value number-token)) (:state number-token))
-                                    number-token))
-                                using-token))))
-                         (:state interrupt-result))]
-        (if (:success? using-result)
-          (success {:interrupt-number (:value interrupt-result)
-                   :using-clause (:value using-result)}
-                  (:state using-result))
-          using-result))
-      interrupt-result)))
+  ((do-parse
+     interrupt-num (optional (do-parse
+                               interrupt-keyword (expect-token-value :interrupt)
+                               interrupt-number (expect-token :number)
+                               (return-parser (:value interrupt-number))))
+     using-num (optional (do-parse
+                           using-keyword (expect-token-value :using)
+                           using-number (expect-token :number)
+                           (return-parser (:value using-number))))
+     (return-parser {:interrupt-number interrupt-num
+                    :using-clause using-num})) state))
 
 ;; Добавляем парсеры для SFR и SBIT деклараций
 (defn parse-sfr-declaration
