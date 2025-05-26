@@ -11,7 +11,9 @@
          choice
          many
          optional
-         expect-token-value)
+         expect-token-value
+         parse-c51-function-modifiers
+         expect-c51-keyword)
 ;; ============================================================================
 ;; МОНАДИЧЕСКИЕ КОМБИНАТОРЫ ДЛЯ ПАРСИНГА
 ;; ============================================================================
@@ -196,6 +198,12 @@
       (if (:success? token-result)
         (let [token (:value token-result)]
           (if (or (= (:value token) expected-value)
+                  ;; Поддержка C51 ключевых слов
+                  (and (= expected-value :interrupt) (and (= (:type token) :c51-keyword) (= (:value token) :interrupt)))
+                  (and (= expected-value :using) (and (= (:type token) :c51-keyword) (= (:value token) :using)))
+                  (and (= expected-value :sfr) (and (= (:type token) :c51-keyword) (= (:value token) :sfr)))
+                  (and (= expected-value :sbit) (and (= (:type token) :c51-keyword) (= (:value token) :sbit)))
+                  ;; Существующие проверки
                   (and (= expected-value :open-round) (and (= (:type token) :bracket) (= (:value token) :open-round)))
                   (and (= expected-value :close-round) (and (= (:type token) :bracket) (= (:value token) :close-round)))
                   (and (= expected-value :open-curly) (and (= (:type token) :bracket) (= (:value token) :open-curly)))
@@ -372,6 +380,13 @@
 
 (defn literal-node [value type]
   (make-ast-node :literal :value value :literal-type type))
+
+(defn interrupt-declaration-node [function-name interrupt-number using-clause]
+  "Создает узел объявления обработчика прерывания для C51"
+  (make-ast-node :interrupt-declaration
+                 :function-name function-name
+                 :interrupt-number interrupt-number
+                 :using-clause using-clause))
 
 ;; ============================================================================
 ;; ПАРСЕРЫ ВЫРАЖЕНИЙ (с учетом приоритета операторов)
@@ -1086,7 +1101,7 @@
       type-result)))
 
 (defn parse-function-declaration 
-  "Парсит объявление функции"
+  "Парсит объявление функции с поддержкой C51-специфичных модификаторов interrupt и using"
   [state]
   (let [type-result (parse-type-specifier state)]
     (if (:success? type-result)
@@ -1098,30 +1113,43 @@
                 (if (:success? params-result)
                   (let [close-result ((expect-token-value :close-round) (:state params-result))]
                     (if (:success? close-result)
-                      ;; Пробуем парсить тело функции или точку с запятой
-                      (let [body-or-semi-result 
-                            ((choice 
-                              ;; Определение функции с телом
-                              (fn [state]
-                                (let [body-result (parse-block-statement state)]
-                                  (if (:success? body-result)
-                                    (success {:has-body true :body (:value body-result)} (:state body-result))
-                                    body-result)))
-                              ;; Объявление функции с точкой с запятой
-                              (fn [state]
-                                (let [semi-result ((expect-token-value :semicolon) state)]
-                                  (if (:success? semi-result)
-                                    (success {:has-body false :body nil} (:state semi-result))
-                                    semi-result))))
-                             (:state close-result))]
-                        (if (:success? body-or-semi-result)
-                          (let [result-data (:value body-or-semi-result)]
-                            (success (function-declaration-node (:value type-result) 
-                                                               (extract-identifier-name (:value name-result)) 
-                                                               (:value params-result) 
-                                                               (:body result-data))
-                                    (:state body-or-semi-result)))
-                          body-or-semi-result))
+                      ;; Парсим C51-специфичные модификаторы (interrupt N [using M])
+                      (let [modifiers-result (parse-c51-function-modifiers (:state close-result))]
+                        (if (:success? modifiers-result)
+                          ;; Пробуем парсить тело функции или точку с запятой
+                          (let [body-or-semi-result 
+                                ((choice 
+                                  ;; Определение функции с телом
+                                  (fn [state]
+                                    (let [body-result (parse-block-statement state)]
+                                      (if (:success? body-result)
+                                        (success {:has-body true :body (:value body-result)} (:state body-result))
+                                        body-result)))
+                                  ;; Объявление функции с точкой с запятой
+                                  (fn [state]
+                                    (let [semi-result ((expect-token-value :semicolon) state)]
+                                      (if (:success? semi-result)
+                                        (success {:has-body false :body nil} (:state semi-result))
+                                        semi-result))))
+                                 (:state modifiers-result))]
+                            (if (:success? body-or-semi-result)
+                              (let [result-data (:value body-or-semi-result)
+                                    modifiers (:value modifiers-result)]
+                                ;; Если есть interrupt модификатор, создаем interrupt-declaration-node
+                                (if (:interrupt-number modifiers)
+                                  (success (interrupt-declaration-node 
+                                           (extract-identifier-name (:value name-result))
+                                           (:interrupt-number modifiers)
+                                           (:using-clause modifiers))
+                                          (:state body-or-semi-result))
+                                  ;; Иначе создаем обычный function-declaration-node
+                                  (success (function-declaration-node (:value type-result) 
+                                                                     (extract-identifier-name (:value name-result)) 
+                                                                     (:value params-result) 
+                                                                     (:body result-data))
+                                          (:state body-or-semi-result))))
+                              body-or-semi-result))
+                          modifiers-result))
                       close-result))
                   params-result))
               open-result))
@@ -1441,4 +1469,51 @@
 (def ^:export parse-if-statement-refactored parse-if-statement-refactored)
 (def ^:export parse-for-statement-refactored parse-for-statement-refactored)
 (def ^:export parse-variable-declaration-refactored parse-variable-declaration-refactored)
-(def ^:export compare-parser-approaches compare-parser-approaches) 
+(def ^:export compare-parser-approaches compare-parser-approaches)
+
+;; Добавляем парсер для C51-специфичных модификаторов функций
+(defn parse-c51-function-modifiers
+  "Парсит C51-специфичные модификаторы функций: interrupt N [using M]
+   Возвращает карту с :interrupt-number и :using-clause (может быть nil)"
+  [state]
+  (let [interrupt-result ((optional (fn [state]
+                                     (let [interrupt-token-result ((expect-token-value :interrupt) state)]
+                                       (if (:success? interrupt-token-result)
+                                         (let [number-result ((expect-token :number) (:state interrupt-token-result))]
+                                           (if (:success? number-result)
+                                             (success (:value (:value number-result)) (:state number-result))
+                                             number-result))
+                                         interrupt-token-result))))
+                         state)]
+    (if (:success? interrupt-result)
+      (let [using-result ((optional (fn [state]
+                                     (let [using-token-result ((expect-token-value :using) state)]
+                                       (if (:success? using-token-result)
+                                         (let [number-result ((expect-token :number) (:state using-token-result))]
+                                           (if (:success? number-result)
+                                             (success (:value (:value number-result)) (:state number-result))
+                                             number-result))
+                                         using-token-result))))
+                         (:state interrupt-result))]
+        (if (:success? using-result)
+          (success {:interrupt-number (:value interrupt-result)
+                   :using-clause (:value using-result)}
+                  (:state using-result))
+          using-result))
+      interrupt-result)))
+
+(defn expect-c51-keyword
+  "Парсер, ожидающий C51-специфичное ключевое слово"
+  [expected-keyword]
+  (fn [state]
+    (let [token-result (current-token state)]
+      (if (:success? token-result)
+        (let [token (:value token-result)]
+          (if (and (= (:type token) :c51-keyword) (= (:value token) expected-keyword))
+            (let [advance-result (advance state)]
+              (if (:success? advance-result)
+                (success token (:state advance-result))
+                advance-result))
+            (failure (str "Ожидалось C51 ключевое слово " expected-keyword 
+                         ", получен " (:type token) " " (:value token)) state)))
+        token-result)))) 

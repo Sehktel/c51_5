@@ -74,4 +74,10 @@
 
 (println "Тест завершен.")
 
-(println "\n=== Тесты завершены ===") 
+(println "\n=== Тесты завершены ===")
+
+(println "Тестируем токенизацию:")
+(def tokens (lexer/tokenize "void foo(void) interrupt 2 { }"))
+(println "Токены:")
+(doseq [token tokens]
+  (println "  " token)) 
