@@ -55,7 +55,8 @@
 (defmacro do-parse 
   "Гигиенический макрос для последовательной композиции парсеров в стиле do-notation
    Обеспечивает полную защиту от захвата переменных и валидацию входных данных
-   Символ _ используется для игнорирования результатов парсинга"
+   Символ _ используется для игнорирования результатов парсинга
+   ОБНОВЛЕНО: Использует явные gensym для абсолютной безопасности"
   [& bindings]
   ;; Валидация входных данных - последний элемент должен быть выражением
   (when (even? (count bindings))
@@ -67,7 +68,11 @@
   (let [all-args (vec bindings)
         final-expr (last all-args)
         binding-pairs (partition 2 (butlast all-args))
-        forbidden-names #{'state 'state# 'result 'result# 'parser-state 'parse-result}]
+        forbidden-names #{'state 'state# 'result 'result# 'parser-state 'parse-result 'next-state}
+        ;; Создаем уникальные символы ОДИН раз для безопасности
+        state-sym (gensym "parser-state")
+        result-sym (gensym "parse-result")
+        next-state-sym (gensym "next-state")]  ; Безопасный gensym вместо ~'next-state
     
     ;; Проверка на запрещенные имена переменных (кроме _)
     (doseq [[binding _] binding-pairs]
@@ -90,18 +95,15 @@
                   ;; Не парсер - оборачиваем в return-parser
                   `(return-parser ~final-expr))
                 (let [[binding expr] (first pairs)
-                      remaining-pairs (rest pairs)
-                      ;; Генерируем уникальные символы для каждого уровня
-                      state-sym (gensym "parser-state")
-                      result-sym (gensym "parse-result")]
+                      remaining-pairs (rest pairs)]
                   (if (and (symbol? binding) (not= binding '_))
                     ;; Связывание результата с переменной
                     `(fn [~state-sym]
                        (let [~result-sym (~expr ~state-sym)]
                          (if (:success? ~result-sym)
                            (let [~binding (:value ~result-sym)
-                                 next-state# (:state ~result-sym)]
-                             (~(build-parser-chain remaining-pairs final-expr) next-state#))
+                                 ~next-state-sym (:state ~result-sym)]  ; Безопасный gensym
+                             (~(build-parser-chain remaining-pairs final-expr) ~next-state-sym))
                            ~result-sym)))
                     ;; Игнорирование результата (binding это _ или не символ)
                     `(fn [~state-sym]
