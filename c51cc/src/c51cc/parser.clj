@@ -815,39 +815,49 @@
       signedness-result)))
 
 (defn parse-parameter-list 
-  "Парсит список параметров функции"
+  "Парсит список параметров функции. Обрабатывает специальный случай void"
   [state]
-  ;; Сначала пробуем парсить непустой список параметров
-  (let [type-result (parse-type-specifier state)]
-    (if (:success? type-result)
-      ;; Если тип найден, пробуем парсить имя
-      (let [name-result ((expect-token :identifier) (:state type-result))]
-        (if (:success? name-result)
-          ;; Если имя найдено, парсим остальные параметры
-          (let [first-param {:type (:value type-result) 
-                            :name (:value (:value name-result))}
-                rest-result ((many (fn [state]
-                                    (let [comma-result ((expect-token-value :comma) state)]
-                                      (if (:success? comma-result)
-                                        (let [type-result (parse-type-specifier (:state comma-result))]
-                                          (if (:success? type-result)
-                                            (let [name-result ((expect-token :identifier) (:state type-result))]
-                                              (if (:success? name-result)
-                                                (success {:type (:value type-result) 
-                                                         :name (:value (:value name-result))}
-                                                        (:state name-result))
-                                                name-result))
-                                            type-result))
-                                        comma-result))))
-                            (:state name-result))]
-            (if (:success? rest-result)
-              (success (cons first-param (:value rest-result))
-                      (:state rest-result))
-              rest-result))
-          ;; Если имя не найдено, возвращаем ошибку
-          name-result))
-      ;; Если тип не найден, возвращаем пустой список (нет параметров)
-      (success [] state))))
+  ;; Сначала проверяем специальный случай: одиночный void
+  (let [current-token-result (current-token state)]
+    (if (and (:success? current-token-result)
+             (= (:type (:value current-token-result)) :type-keyword)
+             (= (:base-type (:value current-token-result)) :void))
+      ;; Если это void, потребляем токен и возвращаем пустой список параметров
+      (let [advance-result (advance state)]
+        (if (:success? advance-result)
+          (success [] (:state advance-result))
+          advance-result))
+      ;; Иначе пробуем парсить обычный список параметров
+      (let [type-result (parse-type-specifier state)]
+        (if (:success? type-result)
+          ;; Если тип найден, пробуем парсить имя
+          (let [name-result ((expect-token :identifier) (:state type-result))]
+            (if (:success? name-result)
+              ;; Если имя найдено, парсим остальные параметры
+              (let [first-param {:type (:value type-result) 
+                                :name (:value (:value name-result))}
+                    rest-result ((many (fn [state]
+                                        (let [comma-result ((expect-token-value :comma) state)]
+                                          (if (:success? comma-result)
+                                            (let [type-result (parse-type-specifier (:state comma-result))]
+                                              (if (:success? type-result)
+                                                (let [name-result ((expect-token :identifier) (:state type-result))]
+                                                  (if (:success? name-result)
+                                                    (success {:type (:value type-result) 
+                                                             :name (:value (:value name-result))}
+                                                            (:state name-result))
+                                                    name-result))
+                                                type-result))
+                                            comma-result))))
+                                (:state name-result))]
+                (if (:success? rest-result)
+                  (success (cons first-param (:value rest-result))
+                          (:state rest-result))
+                  rest-result))
+              ;; Если имя не найдено, возвращаем ошибку
+              name-result))
+          ;; Если тип не найден, возвращаем пустой список (нет параметров)
+          (success [] state))))))
 
 (defn parse-block-statement 
   "Парсит блок операторов в фигурных скобках
@@ -873,159 +883,14 @@
       open-result)))
 
 (defn parse-if-statement 
-  "Парсит условный оператор if"
-  [state]
-  (let [if-result ((expect-token-value :if) state)]
-    (if (:success? if-result)
-      (let [open-result ((expect-token-value :open-round) (:state if-result))]
-        (if (:success? open-result)
-          (let [condition-result (parse-expression (:state open-result))]
-            (if (:success? condition-result)
-              (let [close-result ((expect-token-value :close-round) (:state condition-result))]
-                (if (:success? close-result)
-                  (let [then-result (parse-statement (:state close-result))]
-                    (if (:success? then-result)
-                      (let [else-result ((optional (fn [state]
-                                                    (let [else-kw-result ((expect-token-value :else) state)]
-                                                      (if (:success? else-kw-result)
-                                                        (parse-statement (:state else-kw-result))
-                                                        else-kw-result))))
-                                        (:state then-result))]
-                        (if (:success? else-result)
-                          (success (if-statement-node (:value condition-result) 
-                                                     (:value then-result) 
-                                                     (:value else-result))
-                                  (:state else-result))
-                          else-result))
-                      then-result))
-                  close-result))
-              condition-result))
-          open-result))
-      if-result)))
-
-(defn parse-while-statement 
-  "Парсит цикл while"
-  [state]
-  (let [while-result ((expect-token-value :while) state)]
-    (if (:success? while-result)
-      (let [open-result ((expect-token-value :open-round) (:state while-result))]
-        (if (:success? open-result)
-          (let [condition-result (parse-expression (:state open-result))]
-            (if (:success? condition-result)
-              (let [close-result ((expect-token-value :close-round) (:state condition-result))]
-                (if (:success? close-result)
-                  (let [body-result (parse-statement (:state close-result))]
-                    (if (:success? body-result)
-                      (success (while-statement-node (:value condition-result) (:value body-result))
-                              (:state body-result))
-                      body-result))
-                  close-result))
-              condition-result))
-          open-result))
-      while-result)))
-
-(defn parse-for-statement 
-  "Парсит цикл for"
-  [state]
-  (let [for-result ((expect-token-value :for) state)]
-    (if (:success? for-result)
-      (let [open-result ((expect-token-value :open-round) (:state for-result))]
-        (if (:success? open-result)
-          (let [init-result ((optional parse-expression) (:state open-result))]
-            (if (:success? init-result)
-              (let [semi1-result ((expect-token-value :semicolon) (:state init-result))]
-                (if (:success? semi1-result)
-                  (let [condition-result ((optional parse-expression) (:state semi1-result))]
-                    (if (:success? condition-result)
-                      (let [semi2-result ((expect-token-value :semicolon) (:state condition-result))]
-                        (if (:success? semi2-result)
-                          (let [update-result ((optional parse-expression) (:state semi2-result))]
-                            (if (:success? update-result)
-                              (let [close-result ((expect-token-value :close-round) (:state update-result))]
-                                (if (:success? close-result)
-                                  (let [body-result (parse-statement (:state close-result))]
-                                    (if (:success? body-result)
-                                      (success (for-statement-node (:value init-result) 
-                                                                  (:value condition-result) 
-                                                                  (:value update-result) 
-                                                                  (:value body-result))
-                                              (:state body-result))
-                                      body-result))
-                                  close-result))
-                              update-result))
-                          semi2-result))
-                      condition-result))
-                  semi1-result))
-              init-result))
-          open-result))
-      for-result)))
-
-(defn parse-return-statement 
-  "Парсит оператор return"
-  [state]
-  (let [return-result ((expect-token-value :return) state)]
-    (if (:success? return-result)
-      (let [expr-result ((optional parse-expression) (:state return-result))]
-        (if (:success? expr-result)
-          (let [semi-result ((expect-token-value :semicolon) (:state expr-result))]
-            (if (:success? semi-result)
-              (success (return-statement-node (:value expr-result)) (:state semi-result))
-              semi-result))
-          expr-result))
-      return-result)))
-
-(defn parse-expression-statement 
-  "Парсит оператор-выражение"
-  [state]
-  (let [expr-result (parse-expression state)]
-    (if (:success? expr-result)
-      (let [semi-result ((expect-token-value :semicolon) (:state expr-result))]
-        (if (:success? semi-result)
-          (success (expression-statement-node (:value expr-result)) (:state semi-result))
-          semi-result))
-      expr-result)))
-
-(defn parse-expression-statement-refactored
-  "Отрефакторенная версия парсера оператора-выражения с использованием do-parse
-   Демонстрирует упрощение кода и улучшение читаемости"
-  [state]
-  ((do-parse
-     expr (fn [state] (parse-expression state))
-     _ (expect-token-value :semicolon)
-     (return-parser (expression-statement-node expr))) state))
-
-(defn parse-return-statement-refactored
-  "Отрефакторенная версия парсера оператора return с использованием do-parse
-   Показывает элегантную обработку опциональных выражений"
-  [state]
-  ((do-parse
-     _ (expect-token-value :return)
-     expr (optional (fn [state] (parse-expression state)))
-     _ (expect-token-value :semicolon)
-     (return-parser (return-statement-node expr))) state))
-
-(defn parse-while-statement-refactored
-  "Отрефакторенная версия парсера цикла while с использованием do-parse
-   Демонстрирует значительное упрощение сложной логики парсинга"
-  [state]
-  ((do-parse
-     _ (expect-token-value :while)
-     _ (expect-token-value :open-round)
-     condition (fn [state] (parse-expression state))
-     _ (expect-token-value :close-round)
-     body (fn [state] (parse-statement state))
-     (return-parser (while-statement-node condition body))) state))
-
-(defn parse-if-statement-refactored
-  "Отрефакторенная версия парсера условного оператора if с использованием do-parse
-   Показывает обработку сложной логики с опциональной else-веткой"
+  "Парсит условный оператор if с использованием do-parse макроса"
   [state]
   ((do-parse
      _ (expect-token-value :if)
      _ (expect-token-value :open-round)
-     condition (fn [state] (parse-expression state))
+     condition parse-expression
      _ (expect-token-value :close-round)
-     then-branch (fn [state] (parse-statement state))
+     then-branch parse-statement
      else-branch (optional (fn [state]
                             (let [else-result ((expect-token-value :else) state)]
                               (if (:success? else-result)
@@ -1033,28 +898,54 @@
                                 else-result))))
      (return-parser (if-statement-node condition then-branch else-branch))) state))
 
-(defn parse-for-statement-refactored
-  "Отрефакторенная версия парсера цикла for с использованием do-parse
-   Демонстрирует обработку множественных опциональных компонентов"
+(defn parse-while-statement 
+  "Парсит цикл while с использованием do-parse макроса"
+  [state]
+  ((do-parse
+     _ (expect-token-value :while)
+     _ (expect-token-value :open-round)
+     condition parse-expression
+     _ (expect-token-value :close-round)
+     body parse-statement
+     (return-parser (while-statement-node condition body))) state))
+
+(defn parse-for-statement 
+  "Парсит цикл for с использованием do-parse макроса"
   [state]
   ((do-parse
      _ (expect-token-value :for)
      _ (expect-token-value :open-round)
-     init (optional (fn [state] (parse-expression state)))
+     init (optional parse-expression)
      _ (expect-token-value :semicolon)
-     condition (optional (fn [state] (parse-expression state)))
+     condition (optional parse-expression)
      _ (expect-token-value :semicolon)
-     update (optional (fn [state] (parse-expression state)))
+     update (optional parse-expression)
      _ (expect-token-value :close-round)
-     body (fn [state] (parse-statement state))
+     body parse-statement
      (return-parser (for-statement-node init condition update body))) state))
 
-(defn parse-variable-declaration-refactored
-  "Отрефакторенная версия парсера объявления переменной с использованием do-parse
-   Показывает упрощение парсинга с опциональной инициализацией"
+(defn parse-return-statement 
+  "Парсит оператор return с использованием do-parse макроса"
   [state]
   ((do-parse
-     type-spec (fn [state] (parse-type-specifier state))
+     _ (expect-token-value :return)
+     expr (optional parse-expression)
+     _ (expect-token-value :semicolon)
+     (return-parser (return-statement-node expr))) state))
+
+(defn parse-expression-statement 
+  "Парсит оператор-выражение с использованием do-parse макроса"
+  [state]
+  ((do-parse
+     expr parse-expression
+     _ (expect-token-value :semicolon)
+     (return-parser (expression-statement-node expr))) state))
+
+(defn parse-variable-declaration 
+  "Парсит объявление переменной с использованием do-parse макроса"
+  [state]
+  ((do-parse
+     type-spec parse-type-specifier
      name (expect-token :identifier)
      init (optional (fn [state]
                      (let [eq-result ((expect-token-value :equal) state)]
@@ -1076,31 +967,6 @@
     parse-for-statement
     parse-return-statement
     parse-expression-statement) state))
-
-(defn parse-variable-declaration 
-  "Парсит объявление переменной"
-  [state]
-  (let [type-result (parse-type-specifier state)]
-    (if (:success? type-result)
-      (let [name-result ((expect-token :identifier) (:state type-result))]
-        (if (:success? name-result)
-          (let [init-result ((optional (fn [state]
-                                        (let [eq-result ((expect-token-value :equal) state)]
-                                          (if (:success? eq-result)
-                                            (parse-expression (:state eq-result))
-                                            eq-result))))
-                            (:state name-result))]
-            (if (:success? init-result)
-              (let [semi-result ((expect-token-value :semicolon) (:state init-result))]
-                (if (:success? semi-result)
-                  (success (variable-declaration-node (:value type-result) 
-                                                     (extract-identifier-name (:value name-result)) 
-                                                     (:value init-result))
-                          (:state semi-result))
-                  semi-result))
-              init-result))
-          name-result))
-      type-result)))
 
 (defn parse-function-declaration 
   "Парсит объявление функции с поддержкой C51-специфичных модификаторов interrupt и using"

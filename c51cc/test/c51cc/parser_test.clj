@@ -583,4 +583,353 @@
       (let [ast (get-ast result)]
         (let [expr (:expression (first (:declarations ast)))]
           (is (= :binary-expression (:ast-type expr)))
-          (is (= :minus (:operator expr)))))))) 
+          (is (= :minus (:operator expr))))))))
+
+;; ============================================================================
+;; ТЕСТЫ C51-СПЕЦИФИЧНЫХ ФУНКЦИЙ (INTERRUPT И USING)
+;; ============================================================================
+
+(deftest test-c51-interrupt-functions
+  (testing "Простая interrupt функция"
+    (let [result (parse-string "void timer_isr() interrupt 1 { }")]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (is (= :program (:ast-type ast)))
+        (let [func-decl (first (:declarations ast))]
+          (is (= :interrupt-declaration (:ast-type func-decl)))
+          (is (= "timer_isr" (:function-name func-decl)))
+          (is (= 1 (:interrupt-number func-decl)))
+          (is (nil? (:using-clause func-decl)))))))
+
+  (testing "Interrupt функция с using"
+    (let [result (parse-string "void uart_isr() interrupt 4 using 2 { }")]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (let [func-decl (first (:declarations ast))]
+          (is (= :interrupt-declaration (:ast-type func-decl)))
+          (is (= "uart_isr" (:function-name func-decl)))
+          (is (= 4 (:interrupt-number func-decl)))
+          (is (= 2 (:using-clause func-decl)))))))
+
+  (testing "Interrupt функция с телом"
+    (let [result (parse-string "void ext_int0() interrupt 0 { P1 = 0xFF; }")]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (let [func-decl (first (:declarations ast))]
+          (is (= :interrupt-declaration (:ast-type func-decl)))
+          (is (= "ext_int0" (:function-name func-decl)))
+          (is (= 0 (:interrupt-number func-decl)))))))
+
+  (testing "Interrupt функция с параметром void"
+    (let [result (parse-string "void serial_isr(void) interrupt 3 using 1 { counter++; }")]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (let [func-decl (first (:declarations ast))]
+          (is (= :interrupt-declaration (:ast-type func-decl)))
+          (is (= "serial_isr" (:function-name func-decl)))
+          (is (= 3 (:interrupt-number func-decl)))
+          (is (= 1 (:using-clause func-decl))))))))
+
+(deftest test-c51-using-functions
+  (testing "Функция только с using (без interrupt)"
+    (let [result (parse-string "void fast_func() using 1 { temp = data; }")]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (let [func-decl (first (:declarations ast))]
+          ;; Функция с using без interrupt должна быть обычной функцией
+          (is (= :function-declaration (:ast-type func-decl)))
+          (is (= "fast_func" (:name func-decl)))))))
+
+  (testing "Функция с параметрами и using"
+    (let [result (parse-string "int calculate(int x, int y) using 2 { return x + y; }")]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (let [func-decl (first (:declarations ast))]
+          (is (= :function-declaration (:ast-type func-decl)))
+          (is (= "calculate" (:name func-decl)))
+          (is (= 2 (count (:parameters func-decl)))))))))
+
+(deftest test-c51-sfr-sbit-declarations
+  (testing "SFR декларация"
+    (let [result (parse-string "sfr P1 = 0x90;")]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (let [sfr-decl (first (:declarations ast))]
+          (is (= :sfr-declaration (:ast-type sfr-decl)))
+          (is (= "P1" (:name sfr-decl)))
+          (is (= 144 (:address sfr-decl)))))))
+
+  (testing "SBIT декларация"
+    (let [result (parse-string "sbit LED = 0x97;")]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (let [sbit-decl (first (:declarations ast))]
+          (is (= :sbit-declaration (:ast-type sbit-decl)))
+          (is (= "LED" (:name sbit-decl)))
+          (is (= 151 (:address sbit-decl)))))))
+
+  (testing "Множественные SFR декларации"
+    (let [result (parse-string "sfr P1 = 0x90; sfr TCON = 0x88;")]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (is (= 2 (count (:declarations ast))))
+        (let [sfr1 (first (:declarations ast))
+              sfr2 (second (:declarations ast))]
+          (is (= :sfr-declaration (:ast-type sfr1)))
+          (is (= "P1" (:name sfr1)))
+          (is (= 144 (:address sfr1)))
+          (is (= :sfr-declaration (:ast-type sfr2)))
+          (is (= "TCON" (:name sfr2)))
+          (is (= 136 (:address sfr2))))))))
+
+(deftest test-c51-mixed-declarations
+  (testing "Смешанные C51 и стандартные декларации"
+    (let [result (parse-string "
+      sfr P1 = 0x90;
+      int counter = 0;
+      void timer_isr() interrupt 1 { counter++; }
+      void main() { P1 = 0xFF; }")]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (is (= 4 (count (:declarations ast))))
+        (let [decls (:declarations ast)]
+          (is (= :sfr-declaration (:ast-type (nth decls 0))))
+          (is (= :variable-declaration (:ast-type (nth decls 1))))
+          (is (= :interrupt-declaration (:ast-type (nth decls 2))))
+          (is (= :function-declaration (:ast-type (nth decls 3))))))))
+
+  (testing "Комплексная C51 программа"
+    (let [result (parse-string "
+      sfr P1 = 0x90;
+      sbit LED = 0x97;
+      int timer_count = 0;
+      
+      void timer0_isr() interrupt 1 using 2 {
+        timer_count++;
+        if (timer_count > 100) {
+          LED = !LED;
+          timer_count = 0;
+        }
+      }
+      
+      void main() {
+        P1 = 0x00;
+        while (1) {
+          timer_count = timer_count + 1;
+        }
+      }")]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (is (= 5 (count (:declarations ast))))
+        (let [decls (:declarations ast)]
+          (is (= :sfr-declaration (:ast-type (nth decls 0))))
+          (is (= :sbit-declaration (:ast-type (nth decls 1))))
+          (is (= :variable-declaration (:ast-type (nth decls 2))))
+          (is (= :interrupt-declaration (:ast-type (nth decls 3))))
+          (is (= :function-declaration (:ast-type (nth decls 4))))
+          
+          (let [interrupt-func (nth decls 3)]
+            (is (= "timer0_isr" (:function-name interrupt-func)))
+            (is (= 1 (:interrupt-number interrupt-func)))
+            (is (= 2 (:using-clause interrupt-func))))))))
+
+(deftest test-c51-error-cases
+  (testing "Ошибка - interrupt без номера"
+    (let [result (parse-string "void isr() interrupt { }")]
+      (is (not (parse-successful? result)))
+      (is (string? (get-error result)))))
+
+  (testing "Ошибка - using без номера"
+    (let [result (parse-string "void func() using { }")]
+      (is (not (parse-successful? result)))
+      (is (string? (get-error result)))))
+
+  (testing "Ошибка - SFR без адреса"
+    (let [result (parse-string "sfr P1;")]
+      (is (not (parse-successful? result)))
+      (is (string? (get-error result)))))
+
+  (testing "Ошибка - SBIT без адреса"
+    (let [result (parse-string "sbit LED;")]
+      (is (not (parse-successful? result)))
+      (is (string? (get-error result)))))
+
+  (testing "Ошибка - неправильный порядок модификаторов"
+    (let [result (parse-string "void isr() using 1 interrupt 2 { }")]
+      ;; Это может парситься как функция с using, а interrupt будет ошибкой
+      ;; или может быть ошибкой парсинга - зависит от реализации
+      (is (not (parse-successful? result))))))
+
+;; ============================================================================
+;; ТЕСТЫ СОВМЕСТИМОСТИ С СУЩЕСТВУЮЩИМИ ФУНКЦИЯМИ
+;; ============================================================================
+
+(deftest test-c51-backward-compatibility
+  (testing "Обычные функции все еще работают"
+    (let [result (parse-string "void normal_func() { return; }")]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (let [func-decl (first (:declarations ast))]
+          (is (= :function-declaration (:ast-type func-decl)))
+          (is (= "normal_func" (:name func-decl)))))))
+
+  (testing "Функции с параметрами все еще работают"
+    (let [result (parse-string "int add(int a, int b) { return a + b; }")]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (let [func-decl (first (:declarations ast))]
+          (is (= :function-declaration (:ast-type func-decl)))
+          (is (= "add" (:name func-decl)))
+          (is (= 2 (count (:parameters func-decl))))))))
+
+  (testing "Стандартные типы данных все еще работают"
+    (let [result (parse-string "unsigned char data = 0xFF; signed int value = -1;")]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (is (= 2 (count (:declarations ast))))
+        (let [var1 (first (:declarations ast))
+              var2 (second (:declarations ast))]
+          (is (= :variable-declaration (:ast-type var1)))
+          (is (= :variable-declaration (:ast-type var2)))
+          (is (= :char (:base-type (:type var1))))
+          (is (= :unsigned (:signedness (:type var1))))
+          (is (= :int (:base-type (:type var2))))
+          (is (= :signed (:signedness (:type var2)))))))))
+
+;; ============================================================================
+;; ТЕСТЫ ПРОИЗВОДИТЕЛЬНОСТИ C51 ПАРСЕРА
+;; ============================================================================
+
+(deftest test-c51-parser-performance
+  (testing "Парсинг большой C51 программы"
+    (let [large-program "
+      sfr P0 = 0x80; sfr P1 = 0x90; sfr P2 = 0xA0; sfr P3 = 0xB0;
+      sfr TCON = 0x88; sfr TMOD = 0x89; sfr TL0 = 0x8A; sfr TH0 = 0x8C;
+      
+      sbit LED1 = 0x90; sbit LED2 = 0x91; sbit BUTTON = 0xB0;
+      
+      unsigned char timer_count = 0;
+      int adc_value = 0;
+      
+      void timer0_isr() interrupt 1 using 1 {
+        timer_count++;
+        if (timer_count >= 100) {
+          LED1 = !LED1;
+          timer_count = 0;
+        }
+      }
+      
+      void external_int0() interrupt 0 using 2 {
+        if (BUTTON == 0) {
+          LED2 = 1;
+        } else {
+          LED2 = 0;
+        }
+      }
+      
+      void serial_isr() interrupt 4 {
+        adc_value = P1;
+      }
+      
+      void delay(unsigned int ms) using 1 {
+        unsigned int i, j;
+        for (i = 0; i < ms; i++) {
+          for (j = 0; j < 1000; j++) {
+            i = i + 1;
+          }
+        }
+      }
+      
+      unsigned char read_adc() {
+        return P1;
+      }
+      
+      void init_system() {
+        P0 = 0x00;
+        P1 = 0xFF;
+        TMOD = 0x01;
+        TCON = 0x10;
+      }
+      
+      void main() {
+        init_system();
+        
+        while (1) {
+          adc_value = read_adc();
+          
+          if (adc_value > 128) {
+            delay(100);
+          } else {
+            delay(50);
+          }
+          
+          if (BUTTON == 0) {
+            delay(10);
+            if (BUTTON == 0) {
+              LED1 = 1;
+              LED2 = 1;
+            }
+          } else {
+            LED1 = 0;
+            LED2 = 0;
+          }
+        }
+      }"
+          result (parse-string large-program)]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (is (> (count (:declarations ast)) 15))
+        
+        (let [decl-types (map :ast-type (:declarations ast))]
+          (is (some #(= % :sfr-declaration) decl-types))
+          (is (some #(= % :sbit-declaration) decl-types))
+          (is (some #(= % :variable-declaration) decl-types))
+          (is (some #(= % :interrupt-declaration) decl-types))
+          (is (some #(= % :function-declaration) decl-types))))))
+
+  (testing "Время парсинга разумное"
+    ;; Простой тест производительности
+    (let [start-time (System/nanoTime)
+          result (parse-string "void timer_isr() interrupt 1 using 2 { counter++; }")
+          end-time (System/nanoTime)
+          duration-ms (/ (- end-time start-time) 1000000.0)]
+      (is (parse-successful? result))
+      ;; Парсинг должен занимать менее 100мс
+      (is (< duration-ms 100.0)))))
+
+;; ============================================================================
+;; ТЕСТЫ ГРАНИЧНЫХ СЛУЧАЕВ C51
+;; ============================================================================
+
+(deftest test-c51-edge-cases
+  (testing "Максимальные номера прерываний"
+    (let [result (parse-string "void isr() interrupt 31 { }")]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (let [func-decl (first (:declarations ast))]
+          (is (= 31 (:interrupt-number func-decl)))))))
+
+  (testing "Максимальные номера банков регистров"
+    (let [result (parse-string "void func() using 3 { }")]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (let [func-decl (first (:declarations ast))]
+          (is (= :function-declaration (:ast-type func-decl)))))))
+
+  (testing "Нулевые номера"
+    (let [result (parse-string "void isr() interrupt 0 using 0 { }")]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (let [func-decl (first (:declarations ast))]
+          (is (= 0 (:interrupt-number func-decl)))
+          (is (= 0 (:using-clause func-decl)))))))
+
+  (testing "Шестнадцатеричные адреса в SFR/SBIT"
+    (let [result (parse-string "sfr PORTA = 0xFF; sbit BIT7 = 0x80;")]
+      (is (parse-successful? result))
+      (let [ast (get-ast result)]
+        (is (= 2 (count (:declarations ast))))
+        (let [sfr-decl (first (:declarations ast))
+              sbit-decl (second (:declarations ast))]
+          (is (= 255 (:address sfr-decl)))
+          (is (= 128 (:address sbit-decl)))))))))

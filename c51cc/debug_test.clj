@@ -98,4 +98,22 @@
 (println "\n5. Полная строка по частям:")
 (def tokens5 (lexer/tokenize "void foo(void) interrupt 2 { }"))
 (println "Количество токенов:" (count tokens5))
-(doseq [token tokens5] (println "  " token)) 
+(doseq [token tokens5] (println "  " token))
+
+(println "=== ДИАГНОСТИКА ПАРСЕРА ===")
+
+;; Тест простой функции
+(let [code "void test() { }"
+      tokens (lexer/tokenize code)]
+  (println "\nТокены:")
+  (doseq [token tokens] (println "  " token))
+  (let [result (parser/parse tokens)]
+    (println "\nРезультат:" result)))
+
+;; Тест interrupt функции
+(let [code "void isr() interrupt 1 { }"
+      tokens (lexer/tokenize code)]
+  (println "\nТокены interrupt:")
+  (doseq [token tokens] (println "  " token))
+  (let [result (parser/parse tokens)]
+    (println "\nРезультат interrupt:" result))) 
