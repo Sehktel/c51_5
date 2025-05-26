@@ -179,11 +179,11 @@
                   (and (= expected-type :number) (= (:type token) :number))
                   (and (= expected-type :identifier) (= (:type token) :identifier))
                   (and (= expected-type :identifier) (= (:type token) :main-keyword))
-                  (and (= expected-type :void) (and (= (:type token) :type-keyword) (= (:base-type token) :void)))
-                  (and (= expected-type :int) (and (= (:type token) :type-keyword) (= (:base-type token) :int)))
-                  (and (= expected-type :char) (and (= (:type token) :type-keyword) (= (:base-type token) :char)))
-                  (and (= expected-type :signed) (and (= (:type token) :type-keyword) (= (:signedness token) :signed)))
-                  (and (= expected-type :unsigned) (and (= (:type token) :type-keyword) (= (:signedness token) :unsigned))))
+                  (and (= expected-type :void) (= (:type token) :type-keyword) (= (:base-type token) :void))
+                  (and (= expected-type :int) (= (:type token) :type-keyword) (= (:base-type token) :int))
+                  (and (= expected-type :char) (= (:type token) :type-keyword) (= (:base-type token) :char))
+                  (and (= expected-type :signed) (= (:type token) :type-keyword) (= (:signedness token) :signed))
+                  (and (= expected-type :unsigned) (= (:type token) :type-keyword) (= (:signedness token) :unsigned)))
             (let [advance-result (advance state)]
               (if (:success? advance-result)
                 (success token (:state advance-result))
@@ -201,54 +201,54 @@
         (let [token (:value token-result)]
           (if (or (= (:value token) expected-value)
                   ;; Поддержка C51 ключевых слов
-                  (and (= expected-value :interrupt) (and (= (:type token) :c51-keyword) (= (:value token) :interrupt)))
-                  (and (= expected-value :using) (and (= (:type token) :c51-keyword) (= (:value token) :using)))
-                  (and (= expected-value :sfr) (and (= (:type token) :c51-keyword) (= (:value token) :sfr)))
-                  (and (= expected-value :sbit) (and (= (:type token) :c51-keyword) (= (:value token) :sbit)))
+                  (and (= expected-value :interrupt) (= (:type token) :c51-keyword) (= (:value token) :interrupt))
+                  (and (= expected-value :using) (= (:type token) :c51-keyword) (= (:value token) :using))
+                  (and (= expected-value :sfr) (= (:type token) :c51-keyword) (= (:value token) :sfr))
+                  (and (= expected-value :sbit) (= (:type token) :c51-keyword) (= (:value token) :sbit))
                   ;; Существующие проверки
-                  (and (= expected-value :open-round) (and (= (:type token) :bracket) (= (:value token) :open-round)))
-                  (and (= expected-value :close-round) (and (= (:type token) :bracket) (= (:value token) :close-round)))
-                  (and (= expected-value :open-curly) (and (= (:type token) :bracket) (= (:value token) :open-curly)))
-                  (and (= expected-value :close-curly) (and (= (:type token) :bracket) (= (:value token) :close-curly)))
-                  (and (= expected-value :open-square) (and (= (:type token) :bracket) (= (:value token) :open-square)))
-                  (and (= expected-value :close-square) (and (= (:type token) :bracket) (= (:value token) :close-square)))
-                  (and (= expected-value :semicolon) (and (= (:type token) :separator) (= (:value token) :semicolon)))
-                  (and (= expected-value :comma) (and (= (:type token) :separator) (= (:value token) :comma)))
-                  (and (= expected-value :plus) (and (= (:type token) :math-operator) (= (:value token) :plus)))
-                  (and (= expected-value :minus) (and (= (:type token) :math-operator) (= (:value token) :minus)))
-                  (and (= expected-value :multiply) (and (= (:type token) :math-operator) (= (:value token) :multiply)))
-                  (and (= expected-value :divide) (and (= (:type token) :math-operator) (= (:value token) :divide)))
-                  (and (= expected-value :modulo) (and (= (:type token) :math-operator) (= (:value token) :modulo)))
-                  (and (= expected-value :increment) (and (= (:type token) :math-operator) (= (:value token) :increment)))
-                  (and (= expected-value :decrement) (and (= (:type token) :math-operator) (= (:value token) :decrement)))
-                  (and (= expected-value :equal) (and (= (:type token) :assignment-operator) (= (:value token) :equal)))
-                  (and (= expected-value :plus-equal) (and (= (:type token) :assignment-operator) (= (:value token) :plus-equal)))
-                  (and (= expected-value :minus-equal) (and (= (:type token) :assignment-operator) (= (:value token) :minus-equal)))
-                  (and (= expected-value :and-equal) (and (= (:type token) :assignment-operator) (= (:value token) :and-equal)))
-                  (and (= expected-value :or-equal) (and (= (:type token) :assignment-operator) (= (:value token) :or-equal)))
-                  (and (= expected-value :xor-equal) (and (= (:type token) :assignment-operator) (= (:value token) :xor-equal)))
-                  (and (= expected-value :shift-left-equal) (and (= (:type token) :assignment-operator) (= (:value token) :shift-left-equal)))
-                  (and (= expected-value :shift-right-equal) (and (= (:type token) :assignment-operator) (= (:value token) :shift-right-equal)))
-                  (and (= expected-value :shift-left) (and (= (:type token) :bitwise-operator) (= (:value token) :shift-left)))
-                  (and (= expected-value :shift-right) (and (= (:type token) :bitwise-operator) (= (:value token) :shift-right)))
-                  (and (= expected-value :less) (and (= (:type token) :comparison-operator) (= (:value token) :less)))
-                  (and (= expected-value :greater) (and (= (:type token) :comparison-operator) (= (:value token) :greater)))
-                  (and (= expected-value :less-equal) (and (= (:type token) :comparison-operator) (= (:value token) :less-equal)))
-                  (and (= expected-value :greater-equal) (and (= (:type token) :comparison-operator) (= (:value token) :greater-equal)))
-                  (and (= expected-value :not-equal) (and (= (:type token) :comparison-operator) (= (:value token) :not-equal)))
-                  (and (= expected-value :and) (and (= (:type token) :logical-operator) (= (:value token) :and)))
-                  (and (= expected-value :or) (and (= (:type token) :logical-operator) (= (:value token) :or)))
-                  (and (= expected-value :not) (and (= (:type token) :logical-operator) (= (:value token) :not)))
-                  (and (= expected-value :if) (and (= (:type token) :control-keyword) (= (:value token) :if)))
-                  (and (= expected-value :else) (and (= (:type token) :control-keyword) (= (:value token) :else)))
-                  (and (= expected-value :while) (and (= (:type token) :control-keyword) (= (:value token) :while)))
-                  (and (= expected-value :for) (and (= (:type token) :control-keyword) (= (:value token) :for)))
-                  (and (= expected-value :return) (and (= (:type token) :control-keyword) (= (:value token) :return)))
-                  (and (= expected-value :void) (and (= (:type token) :type-keyword) (= (:base-type token) :void)))
-                  (and (= expected-value :int) (and (= (:type token) :type-keyword) (= (:base-type token) :int)))
-                  (and (= expected-value :char) (and (= (:type token) :type-keyword) (= (:base-type token) :char)))
-                  (and (= expected-value :signed) (and (= (:type token) :type-keyword) (= (:signedness token) :signed)))
-                  (and (= expected-value :unsigned) (and (= (:type token) :type-keyword) (= (:signedness token) :unsigned))))
+                  (and (= expected-value :open-round) (= (:type token) :bracket) (= (:value token) :open-round))
+                  (and (= expected-value :close-round) (= (:type token) :bracket) (= (:value token) :close-round))
+                  (and (= expected-value :open-curly) (= (:type token) :bracket) (= (:value token) :open-curly))
+                  (and (= expected-value :close-curly) (= (:type token) :bracket) (= (:value token) :close-curly))
+                  (and (= expected-value :open-square) (= (:type token) :bracket) (= (:value token) :open-square))
+                  (and (= expected-value :close-square) (= (:type token) :bracket) (= (:value token) :close-square))
+                  (and (= expected-value :semicolon) (= (:type token) :separator) (= (:value token) :semicolon))
+                  (and (= expected-value :comma) (= (:type token) :separator) (= (:value token) :comma))
+                  (and (= expected-value :plus) (= (:type token) :math-operator) (= (:value token) :plus))
+                  (and (= expected-value :minus) (= (:type token) :math-operator) (= (:value token) :minus))
+                  (and (= expected-value :multiply) (= (:type token) :math-operator) (= (:value token) :multiply))
+                  (and (= expected-value :divide) (= (:type token) :math-operator) (= (:value token) :divide))
+                  (and (= expected-value :modulo) (= (:type token) :math-operator) (= (:value token) :modulo))
+                  (and (= expected-value :increment) (= (:type token) :math-operator) (= (:value token) :increment))
+                  (and (= expected-value :decrement) (= (:type token) :math-operator) (= (:value token) :decrement))
+                  (and (= expected-value :equal) (= (:type token) :assignment-operator) (= (:value token) :equal))
+                  (and (= expected-value :plus-equal) (= (:type token) :assignment-operator) (= (:value token) :plus-equal))
+                  (and (= expected-value :minus-equal) (= (:type token) :assignment-operator) (= (:value token) :minus-equal))
+                  (and (= expected-value :and-equal) (= (:type token) :assignment-operator) (= (:value token) :and-equal))
+                  (and (= expected-value :or-equal) (= (:type token) :assignment-operator) (= (:value token) :or-equal))
+                  (and (= expected-value :xor-equal) (= (:type token) :assignment-operator) (= (:value token) :xor-equal))
+                  (and (= expected-value :shift-left-equal) (= (:type token) :assignment-operator) (= (:value token) :shift-left-equal))
+                  (and (= expected-value :shift-right-equal) (= (:type token) :assignment-operator) (= (:value token) :shift-right-equal))
+                  (and (= expected-value :shift-left) (= (:type token) :bitwise-operator) (= (:value token) :shift-left))
+                  (and (= expected-value :shift-right) (= (:type token) :bitwise-operator) (= (:value token) :shift-right))
+                  (and (= expected-value :less) (= (:type token) :comparison-operator) (= (:value token) :less))
+                  (and (= expected-value :greater) (= (:type token) :comparison-operator) (= (:value token) :greater))
+                  (and (= expected-value :less-equal) (= (:type token) :comparison-operator) (= (:value token) :less-equal))
+                  (and (= expected-value :greater-equal) (= (:type token) :comparison-operator) (= (:value token) :greater-equal))
+                  (and (= expected-value :not-equal) (= (:type token) :comparison-operator) (= (:value token) :not-equal))
+                  (and (= expected-value :and) (= (:type token) :logical-operator) (= (:value token) :and))
+                  (and (= expected-value :or) (= (:type token) :logical-operator) (= (:value token) :or))
+                  (and (= expected-value :not) (= (:type token) :logical-operator) (= (:value token) :not))
+                  (and (= expected-value :if) (= (:type token) :control-keyword) (= (:value token) :if))
+                  (and (= expected-value :else) (= (:type token) :control-keyword) (= (:value token) :else))
+                  (and (= expected-value :while) (= (:type token) :control-keyword) (= (:value token) :while))
+                  (and (= expected-value :for) (= (:type token) :control-keyword) (= (:value token) :for))
+                  (and (= expected-value :return) (= (:type token) :control-keyword) (= (:value token) :return))
+                  (and (= expected-value :void) (= (:type token) :type-keyword) (= (:base-type token) :void))
+                  (and (= expected-value :int) (= (:type token) :type-keyword) (= (:base-type token) :int))
+                  (and (= expected-value :char) (= (:type token) :type-keyword) (= (:base-type token) :char))
+                  (and (= expected-value :signed) (= (:type token) :type-keyword) (= (:signedness token) :signed))
+                  (and (= expected-value :unsigned) (= (:type token) :type-keyword) (= (:signedness token) :unsigned)))
             (let [advance-result (advance state)]
               (if (:success? advance-result)
                 (success token (:state advance-result))
@@ -725,7 +725,8 @@
 
 (defn parse-parameter-list 
   "Парсит список параметров функции. Обрабатывает специальный случай void
-   ОТРЕФАКТОРЕНО: Использует do-parse и choice для упрощения сложной логики"
+   ОТРЕФАКТОРЕНО: Использует do-parse и choice для упрощения сложной логики
+   ИСПРАВЛЕНО: Правильный порядок choice - непустой список перед пустым"
   [state]
   ((choice
     ;; Специальный случай: одиночный void
@@ -733,17 +734,17 @@
       void-token (expect-token-value :void)
       (return-parser []))
     
-    ;; Пустой список параметров
-    (return-parser [])
-    
-    ;; Непустой список параметров
+    ;; Непустой список параметров (должен быть перед пустым!)
     (do-parse
       first-param parse-single-parameter
       rest-params (many (do-parse
                           comma-token (expect-token-value :comma)
                           param parse-single-parameter
                           (return-parser param)))
-      (return-parser (cons first-param rest-params)))) state))
+      (return-parser (cons first-param rest-params)))
+    
+    ;; Пустой список параметров (последний вариант)
+    (return-parser [])) state))
 
 (defn parse-block-statement 
   "Парсит блок операторов в фигурных скобках
@@ -884,31 +885,59 @@
                                    parameters 
                                    (:body body-info))))) state))
 
+;; Вспомогательная функция для различения функций и переменных
+(defn parse-function-or-variable-declaration
+  "Умно различает функции и переменные по наличию скобок после имени"
+  [state]
+  ;; Сначала проверяем, можем ли мы парсить тип
+  (let [type-result (parse-type-specifier state)]
+    (if (:success? type-result)
+      ;; Затем проверяем идентификатор
+      (let [name-result ((expect-token :identifier) (:state type-result))]
+        (if (:success? name-result)
+          ;; Проверяем следующий токен без продвижения
+          (let [next-token-result (current-token (:state name-result))]
+            (if (and (:success? next-token-result)
+                     (= (:type (:value next-token-result)) :bracket)
+                     (= (:value (:value next-token-result)) :open-round))
+              ;; Это функция - есть открывающая скобка
+              (parse-function-declaration state)
+              ;; Это переменная - нет открывающей скобки
+              (parse-variable-declaration state)))
+          ;; Не удалось парсить имя - это не наш случай
+          (failure "Не удалось парсить как объявление с типом" state))
+      ;; Не удалось парсить тип - это не наш случай
+      (failure "Не удалось парсить спецификатор типа" state)))))
+
 (defn parse-declaration 
   "Парсит любое объявление или оператор на верхнем уровне программы
    В C89/C90: объявления переменных внутри функций должны быть в начале,
    смешивание объявлений и операторов запрещено (введено в C99)
-   Поддерживает C51-специфичные декларации: sfr, sbit"
+   Поддерживает C51-специфичные декларации: sfr, sbit
+   ИСПРАВЛЕНО: Функции парсятся перед переменными"
   [state]
   ((choice
-    ;; C51-специфичные декларации
-    parse-sfr-declaration
-    parse-sbit-declaration
-    ;; Стандартные декларации
-    parse-function-declaration
-    parse-variable-declaration
-    ;; Добавляем поддержку операторов
-    parse-statement
-    ;; Добавляем поддержку выражений как деклараций (только с точкой с запятой!)
-    (fn [state]
-      (let [expr-result (parse-expression state)]
-        (if (:success? expr-result)
-          (let [semi-result ((expect-token-value :semicolon) (:state expr-result))]
-            (if (:success? semi-result)
-              (success (expression-statement-node (:value expr-result)) (:state semi-result))
-              ;; ИСПРАВЛЕНИЕ: не принимаем выражения без точки с запятой
-              semi-result))
-          expr-result)))) state))
+     ;; C51-специфичные декларации (начинаются с уникальных ключевых слов)
+     parse-sfr-declaration
+     parse-sbit-declaration
+     
+     ;; Сначала пробуем функции, потом переменные
+     parse-function-declaration
+     parse-variable-declaration
+     
+     ;; Добавляем поддержку операторов
+     parse-statement
+     
+     ;; Добавляем поддержку выражений как деклараций (только с точкой с запятой!)
+     (fn [state]
+       (let [expr-result (parse-expression state)]
+         (if (:success? expr-result)
+           (let [semi-result ((expect-token-value :semicolon) (:state expr-result))]
+             (if (:success? semi-result)
+               (success (expression-statement-node (:value expr-result)) (:state semi-result))
+               ;; ИСПРАВЛЕНИЕ: не принимаем выражения без точки с запятой
+               semi-result))
+           expr-result)))) state))
 
 (defn parse-program 
   "Парсит всю программу
