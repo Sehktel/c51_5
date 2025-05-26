@@ -324,6 +324,15 @@
                  :parameters parameters
                  :body body))
 
+(defn c51-function-declaration-node [return-type name parameters body using-clause]
+  "Создает узел объявления функции C51 с модификатором using"
+  (make-ast-node :function-declaration 
+                 :return-type return-type
+                 :name name
+                 :parameters parameters
+                 :body body
+                 :using-clause using-clause))
+
 (defn variable-declaration-node [type name initializer]
   (make-ast-node :variable-declaration
                  :type type
@@ -820,21 +829,40 @@
      _ (expect-token-value :semicolon)
      (return-parser (expression-statement-node expr))) state))
 
+(defn parse-variable-name-list
+  "Парсит список имен переменных, разделенных запятыми"
+  [state]
+  ((do-parse
+     first-name (expect-token :identifier)
+     rest-names (many (do-parse
+                        _ (expect-token-value :comma)
+                        name (expect-token :identifier)
+                        (return-parser (extract-identifier-name name))))
+     (return-parser (cons (extract-identifier-name first-name) rest-names))) state))
+
 (defn parse-variable-declaration 
-  "Парсит объявление переменной с использованием do-parse макроса"
+  "Парсит объявление переменной с использованием do-parse макроса
+   ИСПРАВЛЕНО: Поддерживает множественные объявления типа 'int i, j;'"
   [state]
   ((do-parse
      type-spec parse-type-specifier
-     name (expect-token :identifier)
+     names parse-variable-name-list
      init (optional (fn [state]
                      (let [eq-result ((expect-token-value :equal) state)]
                        (if (:success? eq-result)
                          (parse-expression (:state eq-result))
                          eq-result))))
      _ (expect-token-value :semicolon)
-     (return-parser (variable-declaration-node type-spec 
-                                              (extract-identifier-name name) 
-                                              init))) state))
+     (return-parser 
+       ;; Создаем отдельные узлы для каждой переменной
+       (if (= 1 (count names))
+         ;; Одна переменная - возвращаем один узел
+         (variable-declaration-node type-spec (first names) init)
+         ;; Множественные переменные - возвращаем специальный узел
+         {:ast-type :multiple-variable-declaration
+          :type type-spec
+          :names names
+          :initializer init}))) state))
 
 (defn parse-statement 
   "Парсит любой оператор"
@@ -876,16 +904,22 @@
      body-info parse-function-body-or-semicolon
      (return-parser 
        (if (:interrupt-number modifiers)
-         ;; Создаем interrupt-declaration-node для C51
+         ;; Создаем interrupt-declaration-node для C51 только если есть interrupt
          (interrupt-declaration-node 
            (extract-identifier-name function-name)
            (:interrupt-number modifiers)
            (:using-clause modifiers))
-         ;; Создаем обычный function-declaration-node
-         (function-declaration-node return-type 
-                                   (extract-identifier-name function-name) 
-                                   parameters 
-                                   (:body body-info))))) state))
+         ;; Создаем function-declaration-node с учетом using модификатора
+         (if (:using-clause modifiers)
+           (c51-function-declaration-node return-type 
+                                         (extract-identifier-name function-name) 
+                                         parameters 
+                                         (:body body-info)
+                                         (:using-clause modifiers))
+           (function-declaration-node return-type 
+                                     (extract-identifier-name function-name) 
+                                     parameters 
+                                     (:body body-info)))))) state))
 
 ;; Вспомогательная функция для различения функций и переменных
 (defn parse-function-or-variable-declaration
