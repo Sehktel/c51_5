@@ -13,7 +13,9 @@
          optional
          expect-token-value
          parse-c51-function-modifiers
-         expect-c51-keyword)
+         expect-c51-keyword
+         parse-sfr-declaration
+         parse-sbit-declaration)
 ;; ============================================================================
 ;; МОНАДИЧЕСКИЕ КОМБИНАТОРЫ ДЛЯ ПАРСИНГА
 ;; ============================================================================
@@ -1159,9 +1161,14 @@
 (defn parse-declaration 
   "Парсит любое объявление или оператор на верхнем уровне программы
    В C89/C90: объявления переменных внутри функций должны быть в начале,
-   смешивание объявлений и операторов запрещено (введено в C99)"
+   смешивание объявлений и операторов запрещено (введено в C99)
+   Поддерживает C51-специфичные декларации: sfr, sbit"
   [state]
   ((choice
+    ;; C51-специфичные декларации
+    parse-sfr-declaration
+    parse-sbit-declaration
+    ;; Стандартные декларации
     parse-function-declaration
     parse-variable-declaration
     ;; Добавляем поддержку операторов
@@ -1476,24 +1483,28 @@
   "Парсит C51-специфичные модификаторы функций: interrupt N [using M]
    Возвращает карту с :interrupt-number и :using-clause (может быть nil)"
   [state]
-  (let [interrupt-result ((optional (fn [state]
-                                     (let [interrupt-token-result ((expect-token-value :interrupt) state)]
-                                       (if (:success? interrupt-token-result)
-                                         (let [number-result ((expect-token :number) (:state interrupt-token-result))]
-                                           (if (:success? number-result)
-                                             (success (:value (:value number-result)) (:state number-result))
-                                             number-result))
-                                         interrupt-token-result))))
+  ;; Пробуем парсить interrupt модификатор
+  (let [interrupt-result ((optional 
+                          (fn [state]
+                            (let [interrupt-token ((expect-token-value :interrupt) state)]
+                              (if (:success? interrupt-token)
+                                (let [number-token ((expect-token :number) (:state interrupt-token))]
+                                  (if (:success? number-token)
+                                    (success (:value (:value number-token)) (:state number-token))
+                                    number-token))
+                                interrupt-token))))
                          state)]
     (if (:success? interrupt-result)
-      (let [using-result ((optional (fn [state]
-                                     (let [using-token-result ((expect-token-value :using) state)]
-                                       (if (:success? using-token-result)
-                                         (let [number-result ((expect-token :number) (:state using-token-result))]
-                                           (if (:success? number-result)
-                                             (success (:value (:value number-result)) (:state number-result))
-                                             number-result))
-                                         using-token-result))))
+      ;; Пробуем парсить using модификатор
+      (let [using-result ((optional
+                          (fn [state]
+                            (let [using-token ((expect-token-value :using) state)]
+                              (if (:success? using-token)
+                                (let [number-token ((expect-token :number) (:state using-token))]
+                                  (if (:success? number-token)
+                                    (success (:value (:value number-token)) (:state number-token))
+                                    number-token))
+                                using-token))))
                          (:state interrupt-result))]
         (if (:success? using-result)
           (success {:interrupt-number (:value interrupt-result)
@@ -1501,6 +1512,33 @@
                   (:state using-result))
           using-result))
       interrupt-result)))
+
+;; Добавляем парсеры для SFR и SBIT деклараций
+(defn parse-sfr-declaration
+  "Парсит объявление регистра специальных функций: sfr NAME = ADDRESS;"
+  [state]
+  ((do-parse
+     _ (expect-token-value :sfr)
+     name (expect-token :identifier)
+     _ (expect-token-value :equal)
+     address (expect-token :number)
+     _ (expect-token-value :semicolon)
+     (return-parser (make-ast-node :sfr-declaration
+                                  :name (extract-identifier-name name)
+                                  :address (:value address)))) state))
+
+(defn parse-sbit-declaration
+  "Парсит объявление специального бита: sbit NAME = ADDRESS;"
+  [state]
+  ((do-parse
+     _ (expect-token-value :sbit)
+     name (expect-token :identifier)
+     _ (expect-token-value :equal)
+     address (expect-token :number)
+     _ (expect-token-value :semicolon)
+     (return-parser (make-ast-node :sbit-declaration
+                                  :name (extract-identifier-name name)
+                                  :address (:value address)))) state))
 
 (defn expect-c51-keyword
   "Парсер, ожидающий C51-специфичное ключевое слово"
