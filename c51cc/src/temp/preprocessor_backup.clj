@@ -116,11 +116,9 @@
                 body (str/trim (subs rest-part (inc close-paren)))]
             [macro-name {:params params :body body}])
           [macro-name ""]))
-      ;; Простой макрос - исправляем логику парсинга
-      (let [space-pos (.indexOf trimmed " ")]
-        (if (> space-pos 0)
-          [(subs trimmed 0 space-pos) (str/trim (subs trimmed space-pos))]
-          [trimmed ""])))))
+      ;; Простой макрос
+      (let [parts (str/split trimmed #"\s+" 2)]
+        [(first parts) (if (> (count parts) 1) (second parts) ""]))))
 
 (defn evaluate-condition
   "Вычисляет условие для директив #if, #ifdef, #ifndef
@@ -167,60 +165,39 @@
 (defn process-include
   "Обрабатывает директиву #include"
   [filename system-include? state]
-  ;; Валидация входных параметров
-  (when (str/blank? filename)
-    (throw (ex-info "Пустое имя файла в директиве #include"
-                   {:filename filename :file (:current-file state)})))
-  
   (let [include-file (find-include-file filename (:include-paths state) system-include?)]
     (if include-file
       (if (contains? (set (:include-stack state)) include-file)
         ;; Циклическое включение
         (throw (ex-info (str "Циклическое включение файла: " include-file)
-                       {:file include-file 
-                        :stack (:include-stack state)
-                        :current-file (:current-file state)}))
-        ;; Проверяем глубину включений для предотвращения переполнения стека
-        (if (> (count (:include-stack state)) 50) ; Максимальная глубина включений
-          (throw (ex-info "Превышена максимальная глубина включений файлов"
-                         {:max-depth 50 
-                          :current-depth (count (:include-stack state))
-                          :stack (:include-stack state)}))
-          ;; Читаем файл и обрабатываем его построчно
-          (let [file-content (try 
-                               (slurp include-file)
-                               (catch Exception e
-                                 (throw (ex-info (str "Ошибка чтения файла: " include-file)
-                                               {:filename include-file 
-                                                :cause (.getMessage e)}))))
-                new-state (-> state
-                             (update :include-stack conj include-file)
-                             (assoc :current-file include-file :line-number 1))
-                lines (str/split-lines file-content)]
-            ;; Обрабатываем каждую строку включенного файла
-            (loop [remaining-lines lines
-                   processed-lines []
-                   current-state new-state]
-              (if (empty? remaining-lines)
-                ;; Возвращаем обработанное содержимое и восстанавливаем исходный файл
-                [(str/join "\n" processed-lines) 
-                 (-> current-state
-                     (update :include-stack pop)
-                     (assoc :current-file (:current-file state)))]
-                ;; Обрабатываем следующую строку
-                (let [current-line (first remaining-lines)
-                      [processed-line updated-state] (process-line current-line current-state)]
-                  (recur (rest remaining-lines)
-                         (if (str/blank? processed-line)
-                           processed-lines
-                           (conj processed-lines processed-line))
-                         updated-state)))))))
+                       {:file include-file :stack (:include-stack state)}))
+        ;; Читаем файл и обрабатываем его построчно
+        (let [file-content (slurp include-file)
+              new-state (-> state
+                           (update :include-stack conj include-file)
+                           (assoc :current-file include-file :line-number 1))
+              lines (str/split-lines file-content)]
+          ;; Обрабатываем каждую строку включенного файла
+          (loop [remaining-lines lines
+                 processed-lines []
+                 current-state new-state]
+            (if (empty? remaining-lines)
+              ;; Возвращаем обработанное содержимое и восстанавливаем исходный файл
+              [(str/join "\n" processed-lines) 
+               (-> current-state
+                   (update :include-stack pop)
+                   (assoc :current-file (:current-file state)))]
+              ;; Обрабатываем следующую строку
+              (let [current-line (first remaining-lines)
+                    [processed-line updated-state] (process-line current-line current-state)]
+                (recur (rest remaining-lines)
+                       (if (str/blank? processed-line)
+                         processed-lines
+                         (conj processed-lines processed-line))
+                       updated-state))))))
       ;; Файл не найден
       (throw (ex-info (str "Файл заголовка не найден: " filename)
-                     {:filename filename 
-                      :paths (:include-paths state)
-                      :system-include system-include?
-                      :current-file (:current-file state)})))))
+                     {:filename filename :paths (:include-paths state)})))))
 
 (defn process-line
   "Обрабатывает одну строку кода, применяя директивы препроцессора"
@@ -311,87 +288,39 @@
           ;; Пропускаем строку из-за условной компиляции
           ["" (update state :line-number inc)])))))
 
-(defn validate-preprocessor-state
-  "Валидирует состояние препроцессора на корректность"
-  [state]
-  (when-not (map? (:defines state))
-    (throw (ex-info "Некорректное состояние: defines должно быть map" {:state state})))
-  
-  (when-not (vector? (:include-stack state))
-    (throw (ex-info "Некорректное состояние: include-stack должно быть vector" {:state state})))
-  
-  (when-not (vector? (:conditional-stack state))
-    (throw (ex-info "Некорректное состояние: conditional-stack должно быть vector" {:state state})))
-  
-  (when-not (sequential? (:include-paths state))
-    (throw (ex-info "Некорректное состояние: include-paths должно быть sequential" {:state state})))
-  
-  (when-not (number? (:line-number state))
-    (throw (ex-info "Некорректное состояние: line-number должно быть number" {:state state})))
-  
-  state)
-
 (defn preprocess
   "Основная функция препроцессора.
    Обрабатывает исходный код, применяя все директивы препроцессора"
   ([code] (preprocess code {}))
   ([code options]
-   ;; Валидация входных параметров
-   (when-not (string? code)
-     (throw (ex-info "Код должен быть строкой" {:code-type (type code)})))
-   
-   (when-not (map? options)
-     (throw (ex-info "Опции должны быть map" {:options-type (type options)})))
-   
    (let [;; Сначала удаляем комментарии из всего кода
          code-without-comments (remove-comments code)
          ;; Нормализуем пробелы
          normalized-code (normalize-whitespace code-without-comments)
-         initial-state (-> (merge *preprocessor-state* 
-                                 {:defines (merge (:defines *preprocessor-state*) 
-                                                (get options :defines {}))
-                                  :include-paths (or (:include-paths options) 
-                                                   (:include-paths *preprocessor-state*))
-                                  :current-file (or (:current-file options) "input")})
-                          validate-preprocessor-state)
+         initial-state (merge *preprocessor-state* 
+                             {:defines (merge (:defines *preprocessor-state*) 
+                                            (get options :defines {}))
+                              :include-paths (or (:include-paths options) 
+                                               (:include-paths *preprocessor-state*))
+                              :current-file (or (:current-file options) "input")})
          lines (str/split-lines normalized-code)]
-     
-     ;; Проверяем, что код не пустой
-     (if (str/blank? normalized-code)
-       ""
-       (try
-         (loop [remaining-lines lines
-                processed-lines []
-                current-state initial-state]
-           (if (empty? remaining-lines)
-             ;; Проверяем, что все условные блоки закрыты
-             (if (empty? (:conditional-stack current-state))
-               (str/join "\n" processed-lines)
-               (throw (ex-info "Незакрытые условные блоки препроцессора"
-                              {:unclosed-blocks (:conditional-stack current-state)
-                               :file (:current-file current-state)})))
-             ;; Обрабатываем следующую строку
-             (let [current-line (first remaining-lines)
-                   [processed-line new-state] (try
-                                                (process-line current-line current-state)
-                                                (catch Exception e
-                                                  ;; Добавляем контекст к ошибке
-                                                  (throw (ex-info (.getMessage e)
-                                                                (merge (ex-data e)
-                                                                       {:line-number (:line-number current-state)
-                                                                        :current-line current-line
-                                                                        :file (:current-file current-state)})))))]
-               (recur (rest remaining-lines)
-                      (if (str/blank? processed-line)
-                        processed-lines
-                        (conj processed-lines processed-line))
-                      new-state))))
-         (catch Exception e
-           ;; Логируем ошибку и перебрасываем с дополнительным контекстом
-           (throw (ex-info (str "Ошибка препроцессора: " (.getMessage e))
-                          (merge (ex-data e)
-                                 {:input-length (count code)
-                                 :options options})))))))))
+     (loop [remaining-lines lines
+            processed-lines []
+            current-state initial-state]
+       (if (empty? remaining-lines)
+         ;; Проверяем, что все условные блоки закрыты
+         (if (empty? (:conditional-stack current-state))
+           (str/join "\n" processed-lines)
+           (throw (ex-info "Незакрытые условные блоки препроцессора"
+                          {:unclosed-blocks (:conditional-stack current-state)})))
+         ;; Обрабатываем следующую строку
+         (let [current-line (first remaining-lines)
+               [processed-line new-state] (process-line current-line current-state)]
+           (recur (rest remaining-lines)
+                  (if (str/blank? processed-line)
+                    processed-lines
+                    (conj processed-lines processed-line))
+                  new-state)))))))
 
 ;; Вспомогательные функции для создания защитных макросов
 (defn generate-include-guard

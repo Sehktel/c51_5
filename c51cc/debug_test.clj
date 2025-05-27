@@ -1,6 +1,7 @@
 (ns debug-test
   (:require [c51cc.parser :as parser]
-            [c51cc.lexer :as lexer]))
+            [c51cc.lexer :as lexer]
+            [c51cc.preprocessor :as pp]))
 
 (defn parse-string [input]
   (let [tokens (lexer/tokenize input)]
@@ -116,4 +117,19 @@
   (println "\nТокены interrupt:")
   (doseq [token tokens] (println "  " token))
   (let [result (parser/parse tokens)]
-    (println "\nРезультат interrupt:" result))) 
+    (println "\nРезультат interrupt:" result)))
+
+;; Простой тест для отладки
+(def test-code "#include <reg2051.h>\n#define LED_PORT P1\nvoid main() { LED_PORT = 0xFF; }")
+
+(println "Тестируем код:")
+(println test-code)
+(println "\nРезультат:")
+(println (pp/preprocess test-code {:include-paths ["test/ccode" "include"]}))
+
+;; Еще более простой тест
+(def simple-test "#define LED_PORT P1\nvoid main() { LED_PORT = 0xFF; }")
+(println "\n\nПростой тест:")
+(println simple-test)
+(println "\nРезультат:")
+(println (pp/preprocess simple-test)) 
