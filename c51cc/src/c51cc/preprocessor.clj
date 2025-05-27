@@ -12,9 +12,19 @@
    :conditional-stack [] ;; Стек условной компиляции (#if, #ifdef, etc.)
    :line-number 1        ;; Текущий номер строки
    :current-file ""      ;; Текущий обрабатываемый файл
+   :errors []            ;; Собранные ошибки препроцессора
    })
 
 (declare process-line)
+
+(defn add-error
+  "Добавляет ошибку в состояние препроцессора"
+  [state error-message & [error-data]]
+  (let [error-info (merge {:message error-message
+                          :line (:line-number state)
+                          :file (:current-file state)}
+                         error-data)]
+    (update state :errors conj error-info)))
 
 ;; Регулярные выражения для директив препроцессора
 (def directive-patterns
@@ -165,62 +175,66 @@
           search-paths)))
 
 (defn process-include
-  "Обрабатывает директиву #include"
+  "Обрабатывает директиву #include. Возвращает [result state] где result может быть строкой или nil при ошибке"
   [filename system-include? state]
   ;; Валидация входных параметров
-  (when (str/blank? filename)
-    (throw (ex-info "Пустое имя файла в директиве #include"
-                   {:filename filename :file (:current-file state)})))
-  
-  (let [include-file (find-include-file filename (:include-paths state) system-include?)]
-    (if include-file
-      (if (contains? (set (:include-stack state)) include-file)
+  (if (str/blank? filename)
+    [nil (add-error state "Пустое имя файла в директиве #include" {:filename filename})]
+    
+    (let [include-file (find-include-file filename (:include-paths state) system-include?)]
+      (cond
+        ;; Файл не найден
+        (nil? include-file)
+        [nil (add-error state (str "Файл заголовка не найден: " filename)
+                       {:filename filename 
+                        :paths (:include-paths state)
+                        :system-include system-include?})]
+        
         ;; Циклическое включение
-        (throw (ex-info (str "Циклическое включение файла: " include-file)
+        (contains? (set (:include-stack state)) include-file)
+        [nil (add-error state (str "Циклическое включение файла: " include-file)
                        {:file include-file 
-                        :stack (:include-stack state)
-                        :current-file (:current-file state)}))
-        ;; Проверяем глубину включений для предотвращения переполнения стека
-        (if (> (count (:include-stack state)) 50) ; Максимальная глубина включений
-          (throw (ex-info "Превышена максимальная глубина включений файлов"
-                         {:max-depth 50 
-                          :current-depth (count (:include-stack state))
-                          :stack (:include-stack state)}))
-          ;; Читаем файл и обрабатываем его построчно
-          (let [file-content (try 
-                               (slurp include-file)
-                               (catch Exception e
-                                 (throw (ex-info (str "Ошибка чтения файла: " include-file)
-                                               {:filename include-file 
-                                                :cause (.getMessage e)}))))
-                new-state (-> state
-                             (update :include-stack conj include-file)
-                             (assoc :current-file include-file :line-number 1))
-                lines (str/split-lines file-content)]
-            ;; Обрабатываем каждую строку включенного файла
-            (loop [remaining-lines lines
-                   processed-lines []
-                   current-state new-state]
-              (if (empty? remaining-lines)
-                ;; Возвращаем обработанное содержимое и восстанавливаем исходный файл
-                [(str/join "\n" processed-lines) 
-                 (-> current-state
-                     (update :include-stack pop)
-                     (assoc :current-file (:current-file state)))]
-                ;; Обрабатываем следующую строку
-                (let [current-line (first remaining-lines)
-                      [processed-line updated-state] (process-line current-line current-state)]
-                  (recur (rest remaining-lines)
-                         (if (str/blank? processed-line)
-                           processed-lines
-                           (conj processed-lines processed-line))
-                         updated-state)))))))
-      ;; Файл не найден
-      (throw (ex-info (str "Файл заголовка не найден: " filename)
-                     {:filename filename 
-                      :paths (:include-paths state)
-                      :system-include system-include?
-                      :current-file (:current-file state)})))))
+                        :stack (:include-stack state)})]
+        
+        ;; Превышена глубина включений
+        (> (count (:include-stack state)) 50)
+        [nil (add-error state "Превышена максимальная глубина включений файлов"
+                       {:max-depth 50 
+                        :current-depth (count (:include-stack state))
+                        :stack (:include-stack state)})]
+        
+        ;; Обрабатываем файл
+        :else
+        (let [file-content (try 
+                             (slurp include-file)
+                             (catch Exception e
+                               nil))] ; Возвращаем nil при ошибке чтения
+          (if (nil? file-content)
+            [nil (add-error state (str "Ошибка чтения файла: " include-file)
+                           {:filename include-file})]
+            
+            (let [new-state (-> state
+                                (update :include-stack conj include-file)
+                                (assoc :current-file include-file :line-number 1))
+                  lines (str/split-lines file-content)]
+              ;; Обрабатываем каждую строку включенного файла
+              (loop [remaining-lines lines
+                     processed-lines []
+                     current-state new-state]
+                (if (empty? remaining-lines)
+                  ;; Возвращаем обработанное содержимое и восстанавливаем исходный файл
+                  [(str/join "\n" processed-lines) 
+                   (-> current-state
+                       (update :include-stack pop)
+                       (assoc :current-file (:current-file state)))]
+                  ;; Обрабатываем следующую строку
+                  (let [current-line (first remaining-lines)
+                        [processed-line updated-state] (process-line current-line current-state)]
+                    (recur (rest remaining-lines)
+                           (if (str/blank? processed-line)
+                             processed-lines
+                             (conj processed-lines processed-line))
+                           updated-state)))))))))))
 
 (defn process-line
   "Обрабатывает одну строку кода, применяя директивы препроцессора"
@@ -235,26 +249,36 @@
       ;; Директива #include
       (re-find (:include directive-patterns) trimmed-line)
       (let [[_ filename] (re-find (:include directive-patterns) trimmed-line)
-            system-include? (str/starts-with? (str/trim line) "#include <")]
-        (try
-          (let [[included-content new-state] (process-include filename system-include? state)]
-            [(str "// #include \"" filename "\"\n" included-content) new-state])
-          (catch Exception e
-            ;; В случае ошибки включения, оставляем директиву как комментарий
-            [(str "// " line " // ОШИБКА: " (.getMessage e)) state])))
+            system-include? (str/starts-with? (str/trim line) "#include <")
+            [included-content new-state] (process-include filename system-include? state)]
+        (if (nil? included-content)
+          ;; Ошибка включения - состояние уже содержит ошибку
+          [(str "// " line " // ОШИБКА включения") new-state]
+          ;; Успешное включение
+          [(str "// #include \"" filename "\"\n" included-content) new-state]))
       
       ;; Директива #define
       (re-find (:define directive-patterns) trimmed-line)
-      (let [[_ macro-name definition] (re-find (:define directive-patterns) trimmed-line)
-            [parsed-name parsed-def] (parse-macro-definition (str macro-name " " (or definition "")))
-            new-state (assoc-in state [:defines parsed-name] parsed-def)]
-        ["" new-state])
+      (let [should-process? (or (empty? (:conditional-stack state))
+                               (every? :active (:conditional-stack state)))]
+        (if should-process?
+          (let [[_ macro-name definition] (re-find (:define directive-patterns) trimmed-line)
+                [parsed-name parsed-def] (parse-macro-definition (str macro-name " " (or definition "")))
+                new-state (assoc-in state [:defines parsed-name] parsed-def)]
+            ["" new-state])
+          ;; Пропускаем #define в неактивном блоке
+          ["" state]))
       
       ;; Директива #undef
       (re-find (:undef directive-patterns) trimmed-line)
-      (let [[_ macro-name] (re-find (:undef directive-patterns) trimmed-line)
-            new-state (update state :defines dissoc macro-name)]
-        ["" new-state])
+      (let [should-process? (or (empty? (:conditional-stack state))
+                               (every? :active (:conditional-stack state)))]
+        (if should-process?
+          (let [[_ macro-name] (re-find (:undef directive-patterns) trimmed-line)
+                new-state (update state :defines dissoc macro-name)]
+            ["" new-state])
+          ;; Пропускаем #undef в неактивном блоке
+          ["" state]))
       
       ;; Директива #ifdef
       (re-find (:ifdef directive-patterns) trimmed-line)
@@ -280,9 +304,12 @@
       ;; Директива #else
       (re-find (:else directive-patterns) trimmed-line)
       (if (empty? (:conditional-stack state))
-        [(str "// ОШИБКА: #else без соответствующего #if") state]
+        ;; Ошибка: #else без соответствующего #if
+        (let [new-state (add-error state "Директива #else без соответствующего #if")]
+          [(str "// ОШИБКА: #else без соответствующего #if") new-state])
         (let [current-block (peek (:conditional-stack state))
-              new-block (assoc current-block :active (not (:condition current-block)))
+              ;; ИСПРАВЛЕНИЕ: инвертируем active относительно исходного condition
+              new-block (assoc current-block :active (not (:condition current-block)) :in-else true)
               new-state (assoc state :conditional-stack 
                               (conj (pop (:conditional-stack state)) new-block))]
           ["" new-state]))
@@ -290,15 +317,17 @@
       ;; Директива #endif
       (re-find (:endif directive-patterns) trimmed-line)
       (if (empty? (:conditional-stack state))
-        [(str "// ОШИБКА: #endif без соответствующего #if") state]
+        ;; Ошибка: #endif без соответствующего #if
+        (let [new-state (add-error state "Директива #endif без соответствующего #if")]
+          [(str "// ОШИБКА: #endif без соответствующего #if") new-state])
         (let [new-state (update state :conditional-stack pop)]
           ["" new-state]))
       
       ;; Директива #error
       (re-find (:error directive-patterns) trimmed-line)
-      (let [[_ message] (re-find (:error directive-patterns) trimmed-line)]
-        (throw (ex-info (str "Ошибка препроцессора: " message)
-                       {:line line :file (:current-file state)})))
+      (let [[_ message] (re-find (:error directive-patterns) trimmed-line)
+            new-state (add-error state (str "Ошибка препроцессора: " message) {:type :user-error})]
+        [(str "// #error " message) new-state])
       
       ;; Обычная строка кода
       :else
@@ -312,24 +341,26 @@
           ["" (update state :line-number inc)])))))
 
 (defn validate-preprocessor-state
-  "Валидирует состояние препроцессора на корректность"
+  "Валидирует состояние препроцессора на корректность. Возвращает [valid? state-with-errors]"
   [state]
-  (when-not (map? (:defines state))
-    (throw (ex-info "Некорректное состояние: defines должно быть map" {:state state})))
-  
-  (when-not (vector? (:include-stack state))
-    (throw (ex-info "Некорректное состояние: include-stack должно быть vector" {:state state})))
-  
-  (when-not (vector? (:conditional-stack state))
-    (throw (ex-info "Некорректное состояние: conditional-stack должно быть vector" {:state state})))
-  
-  (when-not (sequential? (:include-paths state))
-    (throw (ex-info "Некорректное состояние: include-paths должно быть sequential" {:state state})))
-  
-  (when-not (number? (:line-number state))
-    (throw (ex-info "Некорректное состояние: line-number должно быть number" {:state state})))
-  
-  state)
+  (let [errors (cond-> []
+                 (not (map? (:defines state)))
+                 (conj {:message "Некорректное состояние: defines должно быть map" :type :validation})
+                 
+                 (not (vector? (:include-stack state)))
+                 (conj {:message "Некорректное состояние: include-stack должно быть vector" :type :validation})
+                 
+                 (not (vector? (:conditional-stack state)))
+                 (conj {:message "Некорректное состояние: conditional-stack должно быть vector" :type :validation})
+                 
+                 (not (sequential? (:include-paths state)))
+                 (conj {:message "Некорректное состояние: include-paths должно быть sequential" :type :validation})
+                 
+                 (not (number? (:line-number state)))
+                 (conj {:message "Некорректное состояние: line-number должно быть number" :type :validation}))]
+    (if (empty? errors)
+      [true state]
+      [false (update state :errors concat errors)])))
 
 (defn preprocess
   "Основная функция препроцессора.
@@ -347,51 +378,62 @@
          code-without-comments (remove-comments code)
          ;; Нормализуем пробелы
          normalized-code (normalize-whitespace code-without-comments)
-         initial-state (-> (merge *preprocessor-state* 
-                                 {:defines (merge (:defines *preprocessor-state*) 
-                                                (get options :defines {}))
-                                  :include-paths (or (:include-paths options) 
-                                                   (:include-paths *preprocessor-state*))
-                                  :current-file (or (:current-file options) "input")})
-                          validate-preprocessor-state)
-         lines (str/split-lines normalized-code)]
+         initial-state (merge *preprocessor-state* 
+                             {:defines (merge (:defines *preprocessor-state*) 
+                                            (get options :defines {}))
+                              :include-paths (or (:include-paths options) 
+                                               (:include-paths *preprocessor-state*))
+                              :current-file (or (:current-file options) "input")})
+         [valid? validated-state] (validate-preprocessor-state initial-state)]
      
-     ;; Проверяем, что код не пустой
-     (if (str/blank? normalized-code)
-       ""
-       (try
-         (loop [remaining-lines lines
-                processed-lines []
-                current-state initial-state]
-           (if (empty? remaining-lines)
-             ;; Проверяем, что все условные блоки закрыты
-             (if (empty? (:conditional-stack current-state))
-               (str/join "\n" processed-lines)
-               (throw (ex-info "Незакрытые условные блоки препроцессора"
-                              {:unclosed-blocks (:conditional-stack current-state)
-                               :file (:current-file current-state)})))
-             ;; Обрабатываем следующую строку
-             (let [current-line (first remaining-lines)
-                   [processed-line new-state] (try
-                                                (process-line current-line current-state)
-                                                (catch Exception e
-                                                  ;; Добавляем контекст к ошибке
-                                                  (throw (ex-info (.getMessage e)
-                                                                (merge (ex-data e)
-                                                                       {:line-number (:line-number current-state)
-                                                                        :current-line current-line
-                                                                        :file (:current-file current-state)})))))]
-               (recur (rest remaining-lines)
-                      (if (str/blank? processed-line)
-                        processed-lines
-                        (conj processed-lines processed-line))
-                      new-state))))
-         (catch Exception e
-           ;; Логируем ошибку и перебрасываем с дополнительным контекстом
-           (throw (ex-info (str "Ошибка препроцессора: " (.getMessage e))
-                          (merge (ex-data e)
-                                 {:input-length (count code)
-                                 :options options})))))))))
+     ;; Проверяем валидность состояния
+     (if (not valid?)
+       {:result "" :errors (:errors validated-state) :success false}
+       
+       ;; Проверяем, что код не пустой
+       (if (str/blank? normalized-code)
+         {:result "" :errors [] :success true}
+         (let [lines (str/split-lines normalized-code)]
+           (try
+             (loop [remaining-lines lines
+                    processed-lines []
+                    current-state initial-state]
+               (if (empty? remaining-lines)
+                 ;; Проверяем, что все условные блоки закрыты
+                 (let [final-state (if (empty? (:conditional-stack current-state))
+                                    current-state
+                                    (add-error current-state 
+                                              "Незакрытые условные блоки препроцессора"
+                                              {:unclosed-blocks (:conditional-stack current-state)}))]
+                   ;; Возвращаем результат с информацией об ошибках
+                   {:result (str/join "\n" processed-lines)
+                    :errors (:errors final-state)
+                    :success (empty? (:errors final-state))})
+                 ;; Обрабатываем следующую строку
+                 (let [current-line (first remaining-lines)
+                       [processed-line new-state] (try
+                                                    (process-line current-line current-state)
+                                                    (catch Exception e
+                                                      ;; Добавляем ошибку вместо выбрасывания исключения
+                                                      (let [error-state (add-error current-state 
+                                                                                   (.getMessage e)
+                                                                                   {:exception-type (type e)
+                                                                                    :current-line current-line})]
+                                                        [(str "// ОШИБКА: " (.getMessage e)) error-state])))]
+                   (recur (rest remaining-lines)
+                          (if (str/blank? processed-line)
+                            processed-lines
+                            (conj processed-lines processed-line))
+                          new-state))))
+             (catch Exception e
+               ;; Критическая ошибка препроцессора
+               {:result ""
+                :errors [{:message (str "Критическая ошибка препроцессора: " (.getMessage e))
+                         :type :critical
+                         :exception-type (type e)
+                         :input-length (count code)
+                         :options options}]
+                :success false}))))))))
 
 ;; Вспомогательные функции для создания защитных макросов
 (defn generate-include-guard

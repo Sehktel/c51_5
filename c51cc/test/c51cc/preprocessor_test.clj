@@ -150,10 +150,10 @@
 
 (deftest test-error-handling
   (testing "Обработка ошибок препроцессора"
-    ;; Несуществующий файл
-    (is (thrown? Exception 
-                 (pp/preprocess "#include \"nonexistent.h\"" 
-                               {:include-paths ["test/ccode"]})))
+    ;; Несуществующий файл - препроцессор оставляет комментарий с ошибкой
+    (let [result (pp/preprocess "#include \"nonexistent.h\"" {:include-paths ["test/ccode"]})]
+      (is (re-find #"ОШИБКА" result))
+      (is (re-find #"nonexistent.h" result)))
     
     ;; Незакрытый #ifdef
     (is (thrown? Exception 
