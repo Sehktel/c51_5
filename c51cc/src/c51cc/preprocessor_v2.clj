@@ -62,6 +62,23 @@
   (undefine-macro [this name state]
     "Удаляет определение макроса"))
 
+(defprotocol FileProcessor
+  "Протокол для работы с файловой системой при обработке директив #include.
+   
+   Архитектурное обоснование:
+   - Абстракция файловых операций для тестируемости
+   - Возможность мокирования файловой системы в тестах
+   - Централизованная обработка ошибок чтения файлов
+   - Поддержка различных стратегий поиска файлов"
+  (resolve-include-path [this filename include-paths current-file]
+    "Разрешает путь к включаемому файлу с учетом путей поиска")
+  (read-include-file [this resolved-path]
+    "Читает содержимое включаемого файла")
+  (file-exists? [this path]
+    "Проверяет существование файла")
+  (get-canonical-path [this path]
+    "Возвращает канонический путь файла для предотвращения циклических включений"))
+
 ;; ============================================================================
 ;; БАЗОВЫЕ ТИПЫ ДАННЫХ
 ;; ============================================================================
@@ -184,6 +201,183 @@
   [state]
   (or (empty? (:conditional-stack state))
       (every? :active (:conditional-stack state))))
+
+;; ============================================================================
+;; ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С ВКЛЮЧЕНИЯМИ
+;; ============================================================================
+
+(defn check-include-depth
+  "Проверяет глубину включений для предотвращения переполнения стека.
+   
+   Теоретическое обоснование:
+   - Защита от бесконечной рекурсии при циклических включениях
+   - Соответствие ограничениям компиляторов C (обычно 15-200 уровней)
+   - Предотвращение исчерпания памяти стека"
+  [state]
+  (< (count (:include-stack state)) MAX_INCLUDE_DEPTH))
+
+(defn parse-include-directive
+  "Парсит директиву #include и определяет тип включения.
+   
+   Поддерживаемые форматы согласно стандарту C89:
+   - #include <filename>  - системные заголовки
+   - #include \"filename\" - пользовательские заголовки
+   
+   Возвращает {:type :system/:user :filename string} или nil при ошибке"
+  [line]
+  (when-let [[_ filename] (re-find (:include directive-patterns) line)]
+    (cond
+      ;; Определяем тип по первому символу в захваченной группе
+      (str/starts-with? line "#include <") {:type :system :filename filename}
+      (str/starts-with? line "#include \"") {:type :user :filename filename}
+      :else nil)))
+
+;; Реализация FileProcessor по умолчанию
+(defrecord DefaultFileProcessor []
+  FileProcessor
+  (resolve-include-path [_ filename include-paths current-file]
+    (let [;; Для пользовательских заголовков сначала ищем относительно текущего файла
+          current-dir (when current-file
+                       (let [file (io/file current-file)]
+                         (when (.exists file)
+                           (.getParent file))))
+          search-paths (if current-dir
+                        (cons current-dir include-paths)
+                        include-paths)]
+      (loop [paths search-paths]
+        (when (seq paths)
+          (let [candidate-path (str (first paths) "/" filename)
+                file (io/file candidate-path)]
+            (if (.exists file)
+              (.getAbsolutePath file)
+              (recur (rest paths))))))))
+  
+  (read-include-file [_ resolved-path]
+    (try
+      (slurp resolved-path)
+      (catch Exception e
+        (throw (ex-info (str "Ошибка чтения файла: " (.getMessage e))
+                       {:file resolved-path :cause e})))))
+  
+  (file-exists? [_ path]
+    (.exists (io/file path)))
+  
+  (get-canonical-path [_ path]
+    (try
+      (.getCanonicalPath (io/file path))
+      (catch Exception _
+        ;; Если не удается получить канонический путь, возвращаем исходный
+        path))))
+
+;; ============================================================================
+;; ФУНКЦИИ ДЛЯ ОБРАБОТКИ ВКЛЮЧЕНИЙ
+;; ============================================================================
+
+(defn expand-includes
+  "Рекурсивно разворачивает все директивы #include в коде.
+   
+   Архитектурное обоснование:
+   - Предварительная обработка включений перед основным transducer
+   - Рекурсивная обработка с защитой от переполнения стека
+   - Циклические включения предотвращаются через include guards (стандарт C89)
+   
+   Возвращает {:content string :state state :errors [errors]}"
+  ([code] (expand-includes code (create-initial-state) (->DefaultFileProcessor)))
+  ([code state] (expand-includes code state (->DefaultFileProcessor)))
+  ([code state file-processor]
+   (let [lines (str/split-lines code)
+         result (atom {:content [] :state state :errors []})]
+     
+     (doseq [line lines]
+       (cond
+         ;; Обрабатываем директиву #include
+         (parse-include-directive line)
+         (let [{:keys [filename type]} (parse-include-directive line)
+               current-state (:state @result)]
+           
+           ;; Проверяем глубину включений
+           (if-not (check-include-depth current-state)
+             (swap! result update :errors conj 
+                    {:message (str "Превышена максимальная глубина включений (" MAX_INCLUDE_DEPTH ")")
+                     :filename filename 
+                     :depth (count (:include-stack current-state))})
+             
+             ;; Разрешаем путь к файлу
+             (let [resolved-path (resolve-include-path file-processor 
+                                                      filename 
+                                                      (:include-paths current-state)
+                                                      (:current-file current-state))]
+               (if-not resolved-path
+                 ;; Файл не найден
+                 (swap! result update :errors conj
+                        {:message (str "Файл не найден: " filename)
+                         :filename filename 
+                         :type type
+                         :search-paths (:include-paths current-state)})
+                 
+                 ;; Читаем файл и добавляем его содержимое
+                 (try
+                   (let [file-content (read-include-file file-processor resolved-path)
+                         ;; Обновляем состояние для обработки включаемого файла
+                         new-state (-> current-state
+                                      (update :include-stack conj (:current-file current-state))
+                                      (assoc :current-file resolved-path))
+                         
+                         ;; Рекурсивно обрабатываем включаемый файл
+                         nested-result (expand-includes file-content new-state file-processor)
+                         
+                         ;; Восстанавливаем состояние, но сохраняем макросы
+                         restored-state (-> new-state
+                                          (assoc :defines (:defines (:state nested-result)))
+                                          (update :include-stack pop)
+                                          (assoc :current-file (:current-file current-state)))]
+                     
+                     ;; Добавляем содержимое включаемого файла
+                     (swap! result 
+                            (fn [r] 
+                              (-> r
+                                  (update :content concat (str/split-lines (:content nested-result)))
+                                  (assoc :state restored-state)
+                                  (update :errors concat (:errors nested-result))))))
+                   
+                   (catch Exception e
+                     (swap! result update :errors conj
+                            {:message (str "Ошибка при чтении файла: " (.getMessage e))
+                             :filename filename 
+                             :resolved-path resolved-path
+                             :exception-type (type e)})))))))
+         
+         ;; Обрабатываем директиву #define
+         (re-find (:define directive-patterns) line)
+         (let [[_ macro-name definition] (re-find (:define directive-patterns) line)
+               current-state (:state @result)
+               parse-string (if definition 
+                             (str macro-name " " definition)
+                             macro-name)
+               [parsed-name parsed-def] (parse-macro-definition parse-string)]
+           (swap! result 
+                  (fn [r]
+                    (-> r
+                        (update :content conj line)
+                        (assoc :state (assoc-in current-state [:defines parsed-name] parsed-def))))))
+         
+         ;; Обычная строка - добавляем как есть
+         :else
+         (swap! result update :content conj line)))
+     
+     ;; Возвращаем результат
+     (update @result :content #(str/join "\n" %)))))
+
+;; Директива #include (упрощенная версия для совместимости)
+(defrecord IncludeDirective [file-processor]
+  PreprocessorDirective
+  (matches? [_ line]
+    (re-find (:include directive-patterns) line))
+  
+  (process [_ line state]
+    ;; В новой архитектуре #include обрабатывается на этапе expand-includes
+    ;; Эта реализация нужна только для совместимости с transducer
+    [nil state]))
 
 ;; ============================================================================
 ;; TRANSDUCERS ДЛЯ ОБРАБОТКИ ТЕКСТА
@@ -339,7 +533,8 @@
    (->IfdefDirective)
    (->IfndefDirective)
    (->ElseDirective)
-   (->EndifDirective)])
+   (->EndifDirective)
+   (->IncludeDirective (->DefaultFileProcessor))])
 
 ;; ============================================================================
 ;; ОСНОВНОЙ TRANSDUCER ДЛЯ ОБРАБОТКИ ПРЕПРОЦЕССОРА
@@ -396,20 +591,30 @@
                          :include-paths (get options :include-paths ["." "include" "lib"])
                          :current-file (get options :current-file "input"))
            
-           ;; Обработка строк через transducers
-           lines (str/split-lines code)
+           ;; ЭТАП 1: Предварительная обработка включений
+           include-result (expand-includes code initial-state)
+           expanded-code (:content include-result)
+           state-after-includes (-> initial-state
+                                   (assoc :defines (merge (:defines initial-state) 
+                                                         (:defines (:state include-result))))
+                                   (assoc :errors (concat (:errors initial-state) 
+                                                         (:errors (:state include-result)))))
+           include-errors (:errors include-result)
            
-           ;; Создаем stateful transducer для отслеживания состояния
-           final-state (volatile! initial-state)
+           ;; ЭТАП 2: Основная обработка через transducers
+           lines (str/split-lines expanded-code)
+           final-state (volatile! state-after-includes)
            
-           ;; Композиция transducers для обработки
+           ;; Композиция transducers для обработки (без IncludeDirective)
            processing-xf (comp
                          (remove-comments-xf)
                          (normalize-whitespace-xf)
                          (map (fn [line]
                                 (let [current-state @final-state
-                                      ;; Ищем подходящую директиву
-                                      matching-directive (first (filter #(matches? % line) directive-registry))]
+                                      ;; Ищем подходящую директиву (кроме #include)
+                                      matching-directive (first (filter #(and (matches? % line)
+                                                                              (not (instance? IncludeDirective %))) 
+                                                                        directive-registry))]
                                   (if matching-directive
                                     ;; Обрабатываем директиву
                                     (let [[processed-line new-state] (process matching-directive line current-state)]
@@ -429,15 +634,32 @@
            
            processed-lines (into [] processing-xf lines)
            final-state-value @final-state
-           errors (:errors final-state-value)]
+           all-errors (concat include-errors (:errors final-state-value))]
        
        {:result (str/join "\n" processed-lines)
-        :errors errors
-        :success (empty? errors)})
+        :errors all-errors
+        :success (empty? all-errors)
+        :final-state final-state-value})
      
      (catch Exception e
        {:result ""
         :errors [{:message (str "Критическая ошибка препроцессора: " (.getMessage e))
                  :type :critical
                  :exception-type (type e)}]
-        :success false})))) 
+        :success false}))))
+
+(defn migrate-to-v2
+  "Помощник для миграции с старого API на новый.
+   Показывает, как изменить код для использования нового API."
+  [code options]
+  (println "=== МИГРАЦИЯ НА ПРЕПРОЦЕССОР V2 ===")
+  (println "Старый код:")
+  (println "  (preprocess code options)")
+  (println "")
+  (println "Новый код:")
+  (println "  (let [result (preprocess-v2 code options)]")
+  (println "    (if (:success result)")
+  (println "      (:result result)")
+  (println "      (handle-errors (:errors result))))")
+  (println "")
+  (preprocess-v2 code options)) 

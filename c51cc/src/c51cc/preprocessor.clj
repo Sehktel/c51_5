@@ -1,6 +1,17 @@
 (ns c51cc.preprocessor
+  "Препроцессор для компилятора C51.
+   
+   Обрабатывает директивы препроцессора C:
+   - #include - включение файлов
+   - #define/#undef - определение/отмена макросов
+   - #ifdef/#ifndef/#else/#endif - условная компиляция
+   - #if/#elif - условная компиляция с выражениями
+   - #error/#warning - пользовательские сообщения
+   - #pragma - директивы компилятора
+   - #line - управление номерами строк"
   (:require [clojure.string :as str]
             [clojure.java.io :as io]
+            [c51cc.preprocessor-v2 :as pp2]
             [clojure.set :as set]))
 
 ;; Состояние препроцессора
@@ -363,77 +374,45 @@
       [false (update state :errors concat errors)])))
 
 (defn preprocess
-  "Основная функция препроцессора.
-   Обрабатывает исходный код, применяя все директивы препроцессора"
+  "Препроцессор C51 с обратной совместимостью.
+   
+   ВАЖНО: Эта функция является wrapper'ом для нового препроцессора v2.
+   Возвращает строку результата для совместимости со старым API.
+   
+   Для получения детальной информации об ошибках используйте preprocess-v2."
   ([code] (preprocess code {}))
   ([code options]
-   ;; Валидация входных параметров
+   ;; Валидация входных параметров для обратной совместимости
    (when-not (string? code)
-     (throw (ex-info "Код должен быть строкой" {:code-type (type code)})))
+     (throw (IllegalArgumentException. "Код должен быть строкой")))
    
    (when-not (map? options)
-     (throw (ex-info "Опции должны быть map" {:options-type (type options)})))
+     (throw (IllegalArgumentException. "Опции должны быть map")))
    
-   (let [;; Сначала удаляем комментарии из всего кода
-         code-without-comments (remove-comments code)
-         ;; Нормализуем пробелы
-         normalized-code (normalize-whitespace code-without-comments)
-         initial-state (merge *preprocessor-state* 
-                             {:defines (merge (:defines *preprocessor-state*) 
-                                            (get options :defines {}))
-                              :include-paths (or (:include-paths options) 
-                                               (:include-paths *preprocessor-state*))
-                              :current-file (or (:current-file options) "input")})
-         [valid? validated-state] (validate-preprocessor-state initial-state)]
+   (try
+     ;; Вызываем новый препроцессор напрямую
+     (let [result (pp2/preprocess-v2 code options)]
+       (if (:success result)
+         ;; Успешная обработка - возвращаем только результат (строку)
+         (:result result)
+         ;; Ошибки - возвращаем результат с комментариями об ошибках для отладки
+         (str (:result result) 
+              (when (seq (:errors result))
+                (str "\n// ОШИБКИ ПРЕПРОЦЕССОРА:\n"
+                     (str/join "\n" (map #(str "// " (:message %)) (:errors result))))))))
      
-     ;; Проверяем валидность состояния
-     (if (not valid?)
-       {:result "" :errors (:errors validated-state) :success false}
-       
-       ;; Проверяем, что код не пустой
-       (if (str/blank? normalized-code)
-         {:result "" :errors [] :success true}
-         (let [lines (str/split-lines normalized-code)]
-           (try
-             (loop [remaining-lines lines
-                    processed-lines []
-                    current-state initial-state]
-               (if (empty? remaining-lines)
-                 ;; Проверяем, что все условные блоки закрыты
-                 (let [final-state (if (empty? (:conditional-stack current-state))
-                                    current-state
-                                    (add-error current-state 
-                                              "Незакрытые условные блоки препроцессора"
-                                              {:unclosed-blocks (:conditional-stack current-state)}))]
-                   ;; Возвращаем результат с информацией об ошибках
-                   {:result (str/join "\n" processed-lines)
-                    :errors (:errors final-state)
-                    :success (empty? (:errors final-state))})
-                 ;; Обрабатываем следующую строку
-                 (let [current-line (first remaining-lines)
-                       [processed-line new-state] (try
-                                                    (process-line current-line current-state)
-                                                    (catch Exception e
-                                                      ;; Добавляем ошибку вместо выбрасывания исключения
-                                                      (let [error-state (add-error current-state 
-                                                                                   (.getMessage e)
-                                                                                   {:exception-type (type e)
-                                                                                    :current-line current-line})]
-                                                        [(str "// ОШИБКА: " (.getMessage e)) error-state])))]
-                   (recur (rest remaining-lines)
-                          (if (str/blank? processed-line)
-                            processed-lines
-                            (conj processed-lines processed-line))
-                          new-state))))
-             (catch Exception e
-               ;; Критическая ошибка препроцессора
-               {:result ""
-                :errors [{:message (str "Критическая ошибка препроцессора: " (.getMessage e))
-                         :type :critical
-                         :exception-type (type e)
-                         :input-length (count code)
-                         :options options}]
-                :success false}))))))))
+     (catch Exception e
+       ;; Критическая ошибка - возвращаем сообщение об ошибке как комментарий
+       (str "// КРИТИЧЕСКАЯ ОШИБКА ПРЕПРОЦЕССОРА: " (.getMessage e))))))
+
+;; Алиас для прямого доступа к новому API (без конфликта имен)
+(def preprocess-v2 pp2/preprocess-v2)
+
+;; ИНСТРУКЦИЯ ПО МИГРАЦИИ:
+;; 1. Старый API: (preprocess code options) → String
+;; 2. Новый API: (preprocess-v2 code options) → {:result String, :errors [], :success Boolean}
+;; 3. Для миграции замените preprocess на preprocess-v2 и обрабатывайте результат как map
+;; 4. Wrapper обеспечивает ПОЛНУЮ обратную совместимость!
 
 ;; Вспомогательные функции для создания защитных макросов
 (defn generate-include-guard

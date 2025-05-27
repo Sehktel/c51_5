@@ -1,20 +1,28 @@
-(require '[c51cc.preprocessor :as pp])
+(require '[c51cc.preprocessor-v2 :as pp])
 
-;; Тест простого include
-(def test-code "#include <reg2051.h>
-int main() { 
-    P1 = 0xFF; 
-    return 0; 
-}")
+;; Тест базовой функциональности
+(println "=== ТЕСТ 1: Базовая обработка ===")
+(let [result (pp/preprocess-v2 "#define TEST 123\nint x = TEST;")]
+  (println "Результат:" (:result result))
+  (println "Успех:" (:success result))
+  (println "Ошибки:" (:errors result)))
 
-(println "=== Тестирование препроцессора ===")
-(println "Исходный код:")
-(println test-code)
-(println "\n=== Результат препроцессирования ===")
+;; Тест include с простым содержимым
+(println "\n=== ТЕСТ 2: Include с простым содержимым ===")
+(spit "test_header.h" "#define MAX_SIZE 100\n#define VERSION \"1.0\"")
+(let [result (pp/preprocess-v2 "#include \"test_header.h\"\nint buffer[MAX_SIZE];" 
+                              {:include-paths ["."]})]
+  (println "Результат:" (:result result))
+  (println "Успех:" (:success result))
+  (println "Ошибки:" (:errors result)))
 
-(try
-  (let [result (pp/preprocess test-code {:include-paths ["test/ccode" "include"]})]
-    (println result))
-  (catch Exception e
-    (println "ОШИБКА:" (.getMessage e))
-    (println "Детали:" (ex-data e)))) 
+;; Тест include guards
+(println "\n=== ТЕСТ 3: Include guards ===")
+(spit "guarded_header.h" "#ifndef GUARD_H\n#define GUARD_H\n#define PROTECTED 42\n#endif")
+(let [result (pp/preprocess-v2 "#include \"guarded_header.h\"\n#include \"guarded_header.h\"\nint x = PROTECTED;" 
+                              {:include-paths ["."]})]
+  (println "Результат:" (:result result))
+  (println "Успех:" (:success result))
+  (println "Ошибки:" (:errors result)))
+
+(println "\n=== ТЕСТЫ ЗАВЕРШЕНЫ ===") 
