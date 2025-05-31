@@ -1,0 +1,13 @@
+resolver: lts-21.25
+
+packages:
+- .
+
+extra-deps: []
+
+# Настройки для разработки
+allow-newer: true
+
+# Флаги компилятора для оптимизации
+ghc-options:
+  "$locals": -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints 

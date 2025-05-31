@@ -1,1 +1,0 @@
-#define INNER_VAL 123

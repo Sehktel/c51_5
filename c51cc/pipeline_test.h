@@ -1,1 +1,0 @@
-#define PIPELINE_VALUE 123

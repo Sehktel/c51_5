@@ -1,1 +1,0 @@
-#define BASIC_VALUE 100

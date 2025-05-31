@@ -1,1 +1,0 @@
-#define COMPAT_VALUE 42
