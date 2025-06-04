@@ -49,34 +49,33 @@ import HCL.Error (LexerError(..))
 -- ТИПЫ ТОКЕНОВ
 -- ============================================================================
 
--- | Ключевые слова языка C и расширения для 8051
+-- | Ключевые слова языка C89 и расширения для 8051
 data Keyword
-  -- Базовые типы данных
-  = KVoid | KChar | KInt | KFloat | KDouble
-  | KShort | KLong | KSigned | KUnsigned
+  -- Базовые типы данных C89
+  = KVoid | KChar | KInt | KShort | KLong | KSigned | KUnsigned
   
-  -- Модификаторы
+  -- Модификаторы C89
   | KConst | KVolatile | KStatic | KExtern | KRegister | KAuto
   
-  -- Управляющие конструкции
+  -- Управляющие конструкции C89
   | KIf | KElse | KSwitch | KCase | KDefault
   | KWhile | KFor | KDo | KBreak | KContinue
   | KReturn | KGoto
   
-  -- Структуры и объединения
+  -- Структуры и объединения C89
   | KStruct | KUnion | KEnum | KTypedef
   
-  -- Размеры
+  -- Размеры C89
   | KSizeof
   
-  -- Расширения для 8051
+  -- Расширения для 8051 (не входят в C89, но необходимы для микроконтроллера)
   | KSbit     -- ^ Битовая переменная
   | KSfr      -- ^ Special Function Register
   | KSfr16    -- ^ 16-битный SFR
-  | KData     -- ^ Внутренняя память данных
-  | KIdata    -- ^ Косвенно адресуемая внутренняя память
-  | KXdata    -- ^ Внешняя память данных
-  | KCode     -- ^ Память программы
+  | KData     -- ^ Внутренняя память данных (8 bytes)
+  | KIdata    -- ^ Косвенно адресуемая внутренняя память (256 bytes)
+  | KXdata    -- ^ Внешняя память данных (64KB)
+  | KCode     -- ^ Память программы (4KB для AT89S4051)
   | KBit      -- ^ Битовый тип
   | KInterrupt -- ^ Обработчик прерывания
   | KUsing    -- ^ Использование банка регистров
@@ -185,35 +184,34 @@ getCurrentSourcePos = do
 -- ПАРСЕРЫ КЛЮЧЕВЫХ СЛОВ
 -- ============================================================================
 
--- | Таблица ключевых слов
+-- | Таблица ключевых слов C89 + расширения 8051
 keywordTable :: [(Text, Keyword)]
 keywordTable =
-  [ -- Базовые типы
+  [ -- Базовые типы C89 (строго по стандарту)
     ("void", KVoid), ("char", KChar), ("int", KInt)
-  , ("float", KFloat), ("double", KDouble)
   , ("short", KShort), ("long", KLong)
   , ("signed", KSigned), ("unsigned", KUnsigned)
   
-    -- Модификаторы
+    -- Модификаторы C89
   , ("const", KConst), ("volatile", KVolatile)
   , ("static", KStatic), ("extern", KExtern)
   , ("register", KRegister), ("auto", KAuto)
   
-    -- Управляющие конструкции
+    -- Управляющие конструкции C89
   , ("if", KIf), ("else", KElse)
   , ("switch", KSwitch), ("case", KCase), ("default", KDefault)
   , ("while", KWhile), ("for", KFor), ("do", KDo)
   , ("break", KBreak), ("continue", KContinue)
   , ("return", KReturn), ("goto", KGoto)
   
-    -- Структуры
+    -- Структуры C89
   , ("struct", KStruct), ("union", KUnion)
   , ("enum", KEnum), ("typedef", KTypedef)
   
-    -- Размеры
+    -- Размеры C89
   , ("sizeof", KSizeof)
   
-    -- Расширения для 8051
+    -- Расширения для 8051 (специфичные для микроконтроллера)
   , ("sbit", KSbit), ("sfr", KSfr), ("sfr16", KSfr16)
   , ("data", KData), ("idata", KIdata), ("xdata", KXdata)
   , ("code", KCode), ("bit", KBit)

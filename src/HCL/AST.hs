@@ -123,13 +123,11 @@ data Declaration = Declaration
 -- ТИПЫ ДАННЫХ
 -- ============================================================================
 
--- | Спецификация типа
+-- | Спецификация типа (строго C89 + расширения 8051)
 data TypeSpec
   = TSVoid                            -- ^ void
   | TSChar                            -- ^ char
-  | TSInt                             -- ^ int
-  | TSFloat                           -- ^ float
-  | TSDouble                          -- ^ double
+  | TSInt                             -- ^ int  
   | TSShort                           -- ^ short
   | TSLong                            -- ^ long
   | TSSigned                          -- ^ signed
@@ -356,8 +354,6 @@ prettyAST (Program decls _) = T.unlines $ map prettyTopLevel decls
       TSVoid -> "void"
       TSChar -> "char"
       TSInt -> "int"
-      TSFloat -> "float"
-      TSDouble -> "double"
       TSShort -> "short"
       TSLong -> "long"
       TSSigned -> "signed"

@@ -110,16 +110,15 @@ data HIRDeclaration = HIRDeclaration
 -- ТИПЫ В HIR
 -- ============================================================================
 
--- | Типизированная система HIR
+-- | Типизированная система HIR (строго C89 + расширения 8051)
 data HIRType
   = HIRVoid                             -- ^ void
   | HIRChar !Bool                       -- ^ char (signed/unsigned)
   | HIRInt !Bool !Int                   -- ^ int (signed/unsigned, size in bits)
-  | HIRFloat !Int                       -- ^ float (size in bits)
   | HIRBit                              -- ^ bit (8051)
   | HIRPointer !HIRType !MemoryModel    -- ^ указатель с моделью памяти
   | HIRArray !HIRType !Int              -- ^ массив с известным размером
-  | HIRFunctionType !HIRType ![HIRType] -- ^ тип функции (переименован)
+  | HIRFunctionType !HIRType ![HIRType] -- ^ тип функции
   | HIRStruct !Identifier ![HIRDeclaration]  -- ^ структура
   | HIRUnion !Identifier ![HIRDeclaration]   -- ^ объединение
   | HIREnum !Identifier ![Identifier]       -- ^ перечисление
@@ -501,15 +500,16 @@ analyzeExpression (Expr exprNode pos) = case exprNode of
 -- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 -- ============================================================================
 
--- | Преобразует TypeSpec в HIRType
+-- | Преобразует TypeSpec в HIRType (только C89 + расширения 8051)
 typeSpecToHIRType :: TypeSpec -> SemanticAnalyzer HIRType
 typeSpecToHIRType = \case
   TSVoid -> return HIRVoid
   TSChar -> return $ HIRChar True  -- По умолчанию signed
   TSInt -> return $ HIRInt True 16  -- 16-битный signed int для 8051
-  TSFloat -> return $ HIRFloat 32
-  TSDouble -> return $ HIRFloat 64
-  TSUnsigned -> return $ HIRInt False 16
+  TSShort -> return $ HIRInt True 8   -- 8-битный signed short для 8051
+  TSLong -> return $ HIRInt True 32   -- 32-битный signed long (если нужен)
+  TSSigned -> return $ HIRInt True 16 -- signed int
+  TSUnsigned -> return $ HIRInt False 16 -- unsigned int
   TSBit -> return HIRBit
   TSPointer baseType -> do
     hirBaseType <- typeSpecToHIRType baseType
@@ -594,7 +594,6 @@ isNumericType :: HIRType -> Bool
 isNumericType = \case
   HIRChar _ -> True
   HIRInt _ _ -> True
-  HIRFloat _ -> True
   HIRBit -> True
   _ -> False
 
@@ -616,9 +615,7 @@ isIntegralType = \case
 promoteTypes :: HIRType -> HIRType -> HIRType
 promoteTypes t1 t2 = case (t1, t2) of
   (HIRInt s1 sz1, HIRInt s2 sz2) -> HIRInt (s1 && s2) (max sz1 sz2)
-  (HIRFloat sz1, HIRFloat sz2) -> HIRFloat (max sz1 sz2)
-  (HIRFloat sz, _) -> HIRFloat sz
-  (_, HIRFloat sz) -> HIRFloat sz
+  (HIRBit, HIRInt _ _) -> HIRInt True 8
   _ -> t1  -- Упрощение
 
 -- | Добавляет символ в таблицу
@@ -666,9 +663,6 @@ withScope scopeId action = do
 -- ============================================================================
 -- УТИЛИТЫ
 -- ============================================================================
-
--- | Получает тип HIR выражения
--- (функция уже определена в HIRExpr)
 
 -- | Красивое отображение HIR
 prettyHIR :: HIRProgram -> Text

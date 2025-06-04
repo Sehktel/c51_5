@@ -3,3 +3,12 @@
 .lsp/*
 .vscode/*
 /c51cc/.clj-kondo/*
+*.o
+*.hi
+*.class
+*.jar
+*.war
+*.ear
+*.zip
+*.tar
+.stack-work*
