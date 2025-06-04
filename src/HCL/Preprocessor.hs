@@ -117,6 +117,14 @@ data PreprocessorResult = PreprocessorResult
   , prFinalState :: !PreprocessorState   -- ^ Финальное состояние
   } deriving (Eq, Show)
 
+-- | Макрос препроцессора  
+data Macro = Macro
+  { macroName :: !Text           -- ^ Имя макроса
+  , macroParams :: ![Text]       -- ^ Параметры макроса (если есть)
+  , macroBody :: !Text           -- ^ Тело макроса
+  , macroPos :: !SourcePos       -- ^ Позиция определения
+  } deriving (Eq, Show)
+
 -- | Класс для директив препроцессора
 class PreprocessorDirective a where
   -- | Проверяет, соответствует ли строка данной директиве
@@ -167,7 +175,7 @@ defaultOptions = PreprocessorOptions
 data IncludeDirective = IncludeDirective
 
 instance PreprocessorDirective IncludeDirective where
-  matches _ line = line =~ ("^\\s*#\\s*include\\s*[<\"]([^>\"]+)[>\"]" :: String)
+  matches _ line = T.unpack line =~ ("^\\s*#\\s*include\\s*[<\"]([^>\"]+)[>\"]" :: String)
   
   process _ line = do
     state <- get
@@ -229,7 +237,7 @@ instance PreprocessorDirective IncludeDirective where
 data DefineDirective = DefineDirective
 
 instance PreprocessorDirective DefineDirective where
-  matches _ line = line =~ ("^\\s*#\\s*define\\s+(\\w+)" :: String)
+  matches _ line = T.unpack line =~ ("^\\s*#\\s*define\\s+(\\w+)" :: String)
   
   process _ line = do
     case parseDefine line of
@@ -247,7 +255,7 @@ instance PreprocessorDirective DefineDirective where
 data UndefDirective = UndefDirective
 
 instance PreprocessorDirective UndefDirective where
-  matches _ line = line =~ ("^\\s*#\\s*undef\\s+(\\w+)" :: String)
+  matches _ line = T.unpack line =~ ("^\\s*#\\s*undef\\s+(\\w+)" :: String)
   
   process _ line = do
     case extractUndefName line of
@@ -265,7 +273,7 @@ instance PreprocessorDirective UndefDirective where
 data IfdefDirective = IfdefDirective
 
 instance PreprocessorDirective IfdefDirective where
-  matches _ line = line =~ ("^\\s*#\\s*ifdef\\s+(\\w+)" :: String)
+  matches _ line = T.unpack line =~ ("^\\s*#\\s*ifdef\\s+(\\w+)" :: String)
   
   process _ line = do
     case extractConditionName line of
@@ -293,21 +301,21 @@ instance PreprocessorDirective IfdefDirective where
 -- | Извлекает имя файла из директивы #include
 extractIncludeFile :: Text -> Maybe Text
 extractIncludeFile line =
-  case line =~ ("^\\s*#\\s*include\\s*[<\"]([^>\"]+)[>\"]" :: String) of
+  case T.unpack line =~ ("^\\s*#\\s*include\\s*[<\"]([^>\"]+)[>\"]" :: String) of
     [[_, filename]] -> Just (T.pack filename)
     _ -> Nothing
 
 -- | Парсит директиву #define
 parseDefine :: Text -> Maybe (Text, MacroDefinition)
 parseDefine line
-  | line =~ ("^\\s*#\\s*define\\s+(\\w+)\\s*\\(([^)]*)\\)\\s*(.*)" :: String) =
-      case line =~ ("^\\s*#\\s*define\\s+(\\w+)\\s*\\(([^)]*)\\)\\s*(.*)" :: String) of
+  | T.unpack line =~ ("^\\s*#\\s*define\\s+(\\w+)\\s*\\(([^)]*)\\)\\s*(.*)" :: String) =
+      case T.unpack line =~ ("^\\s*#\\s*define\\s+(\\w+)\\s*\\(([^)]*)\\)\\s*(.*)" :: String) of
         [[_, name, params, body]] -> 
           let paramList = map T.strip $ T.splitOn "," (T.pack params)
           in Just (T.pack name, FunctionMacro paramList (T.pack body))
         _ -> Nothing
-  | line =~ ("^\\s*#\\s*define\\s+(\\w+)(?:\\s+(.*))?$" :: String) =
-      case line =~ ("^\\s*#\\s*define\\s+(\\w+)(?:\\s+(.*))?$" :: String) of
+  | T.unpack line =~ ("^\\s*#\\s*define\\s+(\\w+)(?:\\s+(.*))?$" :: String) =
+      case T.unpack line =~ ("^\\s*#\\s*define\\s+(\\w+)(?:\\s+(.*))?$" :: String) of
         [[_, name, value]] -> Just (T.pack name, SimpleMacro (T.pack value))
         [[_, name]] -> Just (T.pack name, SimpleMacro "")
         _ -> Nothing
@@ -316,14 +324,14 @@ parseDefine line
 -- | Извлекает имя макроса из директивы #undef
 extractUndefName :: Text -> Maybe Text
 extractUndefName line =
-  case line =~ ("^\\s*#\\s*undef\\s+(\\w+)" :: String) of
+  case T.unpack line =~ ("^\\s*#\\s*undef\\s+(\\w+)" :: String) of
     [[_, name]] -> Just (T.pack name)
     _ -> Nothing
 
 -- | Извлекает имя условия из директив #ifdef/#ifndef
 extractConditionName :: Text -> Maybe Text
 extractConditionName line =
-  case line =~ ("^\\s*#\\s*if(?:n)?def\\s+(\\w+)" :: String) of
+  case T.unpack line =~ ("^\\s*#\\s*if(?:n)?def\\s+(\\w+)" :: String) of
     [[_, name]] -> Just (T.pack name)
     _ -> Nothing
 
@@ -392,7 +400,7 @@ expandMacros defines text = foldl' expandMacro text (Map.toList defines)
     expandMacro txt (name, ObjectMacro replacement) = T.replace name replacement txt
 
 -- | Расширение макроса в тексте
-expandMacro :: Text -> (Text, Macro) -> Text
+expandMacro :: Text -> (Text, MacroDefinition) -> Text
 expandMacro txt (name, ObjectMacro replacement) = 
   T.replace name replacement txt
 expandMacro txt (name, FunctionMacro params replacement) = 

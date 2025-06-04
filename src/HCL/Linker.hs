@@ -42,7 +42,7 @@ module HCL.Linker
   
     -- * Размещение в памяти
   , layoutMemory
-  , allocateSegments
+  , allocateCodeSegments
   , checkMemoryConstraints
   
     -- * Генерация выходных форматов
@@ -57,7 +57,7 @@ module HCL.Linker
   , calculateMemoryUsage
   ) where
 
-import Control.Monad (when, unless, foldM)
+import Control.Monad (when, unless, foldM, foldM_, forM_, mapM_)
 import Control.Monad.State.Strict (StateT, runStateT, get, put, modify)
 import Control.Monad.Except (ExceptT, runExceptT, throwError, catchError)
 import Control.Monad.IO.Class (liftIO)
@@ -78,7 +78,7 @@ import Text.Printf (printf)
 import System.FilePath (takeExtension, replaceExtension)
 import GHC.Generics (Generic)
 
-import HCL.Error (CompilerError(..), Diagnostic(..), DiagnosticLevel(..))
+import HCL.Error (CompilerError(..), Diagnostic(..), DiagnosticLevel(..), LinkerError(..), mkError, mkWarning, mkInfo)
 import HCL.Types (Identifier(..), identifierText)
 
 -- ============================================================================
@@ -410,61 +410,47 @@ parseDataSections lines' = do
   return []
 
 -- | Валидация объектного файла
-validateObjectFile :: ObjectFile -> LinkerM Bool
+validateObjectFile :: ObjectFile -> LinkerM ()
 validateObjectFile ObjectFile{..} = do
-  -- Проверяем корректность символов
-  symbolsValid <- mapM validateSymbol ofSymbols
-  
-  -- Проверяем корректность перемещений
-  relocationsValid <- mapM validateRelocation ofRelocations
-  
-  -- Проверяем корректность сегментов
-  segmentsValid <- mapM validateSegment (ofCodeSections ++ ofDataSections)
-  
-  return $ and symbolsValid && and relocationsValid && and segmentsValid
+  validateSymbols ofSymbols
+  validateRelocations ofRelocations
+  validateMemorySegments (ofCodeSections ++ ofDataSections)
 
--- | Валидация символа
-validateSymbol :: Symbol -> LinkerM Bool
+-- | Валидация символов
+validateSymbols :: [Symbol] -> LinkerM ()
+validateSymbols symbols = do
+  mapM_ validateSymbol symbols
+
+-- | Валидация отдельного символа
+validateSymbol :: Symbol -> LinkerM ()
 validateSymbol Symbol{..} = do
-  -- Проверяем, что имя символа не пустое
   when (T.null symName) $ do
     addDiagnostic $ mkError "Пустое имя символа" Nothing
-    return False
-  
-  -- Проверяем корректность адреса
-  when (symAddress > 0xFFFF) $ do
-    addDiagnostic $ mkError ("Некорректный адрес символа: " <> T.pack (show symAddress)) Nothing
-    return False
-  
-  return True
 
--- | Валидация перемещения
-validateRelocation :: Relocation -> LinkerM Bool
+-- | Валидация перемещений
+validateRelocations :: [Relocation] -> LinkerM ()
+validateRelocations relocs = do
+  mapM_ validateRelocation relocs
+
+-- | Валидация отдельного перемещения
+validateRelocation :: Relocation -> LinkerM ()
 validateRelocation Relocation{..} = do
-  -- Проверяем, что символ не пустой
   when (T.null relSymbol) $ do
     addDiagnostic $ mkError "Пустое имя символа в перемещении" Nothing
-    return False
-  
-  return True
 
--- | Валидация сегмента
-validateSegment :: MemorySegment -> LinkerM Bool
-validateSegment MemorySegment{..} = do
-  -- Проверяем корректность размера
-  when (msSize == 0) $ do
-    addDiagnostic $ mkWarning ("Сегмент нулевого размера: " <> msName) Nothing
-  
-  -- Проверяем соответствие размера данных
-  let actualSize = fromIntegral $ BS.length msData
-  when (actualSize /= msSize) $ do
+-- | Валидация сегментов памяти
+validateMemorySegments :: [MemorySegment] -> LinkerM ()
+validateMemorySegments segments = do
+  mapM_ validateMemorySegment segments
+
+-- | Валидация отдельного сегмента памяти
+validateMemorySegment ms@MemorySegment{..} = do
+  let actualSize = BS.length msData
+  when (actualSize /= fromIntegral msSize) $ do
     addDiagnostic $ mkError 
       ("Несоответствие размера данных в сегменте " <> msName <> 
        ": ожидается " <> T.pack (show msSize) <> 
        ", фактически " <> T.pack (show actualSize)) Nothing
-    return False
-  
-  return True
 
 -- ============================================================================
 -- РАЗРЕШЕНИЕ СИМВОЛОВ
@@ -493,12 +479,13 @@ addSymbol symbol@Symbol{..} = do
     
     Just existingSymbol -> do
       -- Проверяем конфликты
-      if symDefined && symDefined existingSymbol
+      let Symbol{symDefined = existingDefined} = existingSymbol
+      if symDefined && existingDefined
         then throwError $ LinkerError $ 
                "Дублирование символа: " <> symName
         else do
           -- Объединяем определения
-          let mergedSymbol = if symDefined 
+          let mergedSymbol = if symDefined
                             then symbol 
                             else existingSymbol
           put state { lsSymbolTable = Map.insert symName mergedSymbol symbolTable }
@@ -674,15 +661,18 @@ generateHexFile LinkerResult{..} = do
   
   return $ T.unlines (hexLines ++ [eofLine])
 
--- | Генерация строк HEX формата
+-- | Генерация HEX строк для записи в Intel HEX формат
+-- Каждая строка содержит до 16 байт данных
 generateHexLines :: Word16 -> [Word8] -> [Text]
 generateHexLines _ [] = []
 generateHexLines address bytes = 
   let (chunk, rest) = splitAt 16 bytes
       chunkSize = length chunk
       checksum = calculateHexChecksum address chunkSize chunk
-      hexLine = T.pack $ printf ":%02X%04X00%s%02X" 
-                  chunkSize address (concatMap (printf "%02X") chunk) checksum
+      -- Явно указываем тип для устранения неоднозначности
+      hexLine = T.pack $ Text.Printf.printf ":%02X%04X00%s%02X"
+                        (chunkSize :: Int) (address :: Word16)
+                        (concatMap (Text.Printf.printf "%02X" :: Word8 -> String) chunk) (checksum :: Word8)
   in hexLine : generateHexLines (address + fromIntegral chunkSize) rest
 
 -- | Вычисление контрольной суммы HEX
@@ -692,7 +682,7 @@ calculateHexChecksum address size bytes =
       addrLow = fromIntegral (address `mod` 256)
       sizeWord = fromIntegral size
       sum' = sizeWord + addrHigh + addrLow + sum bytes
-  in 256 - (sum' `mod` 256)
+  in fromIntegral ((256 - (fromIntegral sum' `mod` 256)) `mod` 256)
 
 -- | Генерация двоичного файла
 generateBinaryFile :: LinkerResult -> ByteString

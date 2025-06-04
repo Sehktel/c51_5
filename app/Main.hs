@@ -22,10 +22,10 @@ import Options.Applicative
 
 import HCL.Preprocessor (preprocess, defaultOptions, PreprocessorOptions(..), PreprocessorResult(..))
 import HCL.Lexer (tokenize, LexerResult(..), prettyToken, Token)
-import HCL.Parser (parseProgram, runParser, ParseResult(..), prettyParseError)
+-- import HCL.Parser (parseProgram, runParser, ParseResult(..), prettyParseError)
 import HCL.AST (prettyAST, Program)
 import HCL.IR.HIR (HIRProgram(..), HIRDeclaration(..), HIRFunction(..), prettyHIR)
-import HCL.SemanticAnalysis (runSemanticAnalysis)
+-- import HCL.SemanticAnalysis (runSemanticAnalysis)
 import HCL.Error (Diagnostic(..), DiagnosticLevel(..), prettyDiagnostic, CompilerError, prettyError)
 import HCL.Types (identifierText)
 import qualified HCL.Linker as Linker
@@ -244,93 +244,20 @@ compileFile opts@CompilerOptions{..} = do
   case preprocessResult of
     Left err -> return $ Left err
     Right preprocessed -> do
-      when (optStopAfter == PhasePreprocess) $ do
-        outputResult opts preprocessed
-        return $ Right preprocessed
-      
-      -- Фаза 2: Лексический анализ
-      when optVerbose $ putStrLn "Фаза 2: Лексический анализ"
-      lexResult <- runLexer opts preprocessed
-      case lexResult of
-        Left err -> return $ Left err
-        Right tokens -> do
-          when (optStopAfter == PhaseLex) $ do
-            let tokenOutput = T.unlines $ map prettyToken tokens
-            outputResult opts tokenOutput
-            return $ Right tokenOutput
-          
-          -- Фаза 3: Синтаксический анализ
-          when optVerbose $ putStrLn "Фаза 3: Синтаксический анализ"
-          parseResult <- runParser' opts tokens
-          case parseResult of
+      if optStopAfter == PhasePreprocess
+        then do
+          outputResult opts preprocessed
+          return $ Right preprocessed
+        else do
+          -- Фаза 2: Лексический анализ
+          when optVerbose $ putStrLn "Фаза 2: Лексический анализ"
+          lexResult <- runLexer opts preprocessed
+          case lexResult of
             Left err -> return $ Left err
-            Right ast -> do
-              when (optStopAfter == PhaseParse) $ do
-                let astOutput = prettyAST ast
-                outputResult opts astOutput
-                return $ Right astOutput
-              
-              -- Фаза 4: Семантический анализ
-              when optVerbose $ putStrLn "Фаза 4: Семантический анализ"
-              semanticResult <- runSemanticAnalyzer opts ast
-              case semanticResult of
-                Left err -> return $ Left err
-                Right hir -> do
-                  when (optStopAfter == PhaseSemantic) $ do
-                    let hirOutput = prettyHIR hir
-                    outputResult opts hirOutput
-                    return $ Right hirOutput
-                  
-                  -- Фазы оптимизации и генерации кода
-                  when (optStopAfter >= PhaseOptimize) $ do
-                    putStrLn "=== Оптимизация ==="
-                    optimizedHir <- runOptimizations opts hir
-                    
-                    when optShowOptimizedHIR $ do
-                      putStrLn "=== Оптимизированный HIR ==="
-                      TIO.putStrLn (prettyHIR optimizedHir)
-                      putStrLn ""
-                    
-                    when (optStopAfter >= PhaseCodeGen) $ do
-                      putStrLn "=== Генерация кода ==="
-                      assemblyCode <- runCodeGeneration opts optimizedHir
-                      
-                      -- Записываем ассемблерный код во временный файл для линковки
-                      let tempAsmFile = replaceExtension optInputFile ".asm"
-                      TIO.writeFile tempAsmFile assemblyCode
-                      
-                      when (optStopAfter >= PhaseLink) $ do
-                        putStrLn "=== Линковка ==="
-                        linkerResult <- runLinker opts [tempAsmFile]
-                        
-                        case linkerResult of
-                          Left err -> do
-                            putStrLn $ "Ошибка линковки: " ++ T.unpack (prettyError err)
-                            return $ Left (prettyError err)
-                          Right result -> do
-                            when (optVerbose opts) $ do
-                              putStrLn "=== Результат линковки ==="
-                              TIO.putStrLn (Linker.prettyLinkerResult result)
-                            
-                            -- Генерируем выходные файлы
-                            let baseFileName = fromMaybe (replaceExtension optInputFile "") optOutputFile
-                            generateLinkerOutput opts result baseFileName
-                            
-                            putStrLn "Компиляция и линковка завершены успешно!"
-                            return $ Right "Успешно"
-                      
-                      -- Если останавливаемся на генерации кода
-                      when (optStopAfter == PhaseCodeGen) $ do
-                        case optOutputFile of
-                          Just outputFile -> do
-                            TIO.writeFile outputFile assemblyCode
-                            putStrLn $ "Ассемблерный код записан в: " ++ outputFile
-                          Nothing -> do
-                            putStrLn "=== Ассемблерный код ==="
-                            TIO.putStrLn assemblyCode
-                        
-                        putStrLn "Компиляция завершена успешно!"
-                        return $ Right "Успешно"
+            Right tokens -> do
+              let tokenOutput = T.unlines $ map prettyToken tokens
+              outputResult opts tokenOutput
+              return $ Right tokenOutput
 
 -- ============================================================================
 -- ФАЗЫ КОМПИЛЯЦИИ
@@ -369,6 +296,7 @@ runLexer CompilerOptions{..} input = do
     else return $ Left "Ошибки лексического анализа"
 
 -- | Запускает синтаксический анализатор
+{-
 runParser' :: CompilerOptions -> [Token] -> IO (Either Text Program)
 runParser' CompilerOptions{..} tokens = do
   let result = runParser parseProgram tokens
@@ -383,8 +311,10 @@ runParser' CompilerOptions{..} tokens = do
         putStrLn ""
       
       return $ Right ast
+-}
 
 -- | Запускает семантический анализатор
+{-
 runSemanticAnalyzer :: CompilerOptions -> Program -> IO (Either Text HIRProgram)
 runSemanticAnalyzer CompilerOptions{..} ast = do
   (result, diagnostics) <- runSemanticAnalysis ast
@@ -402,6 +332,7 @@ runSemanticAnalyzer CompilerOptions{..} ast = do
         putStrLn ""
       
       return $ Right hir
+-}
 
 -- | Запуск оптимизаций
 runOptimizations :: CompilerOptions -> HIRProgram -> IO HIRProgram
@@ -434,6 +365,7 @@ runOptimizations opts hir = do
       runOptimizations (opts { optOptimizationLevel = 2 }) hir
 
 -- | Запуск генерации кода
+{-
 runCodeGeneration :: CompilerOptions -> HIRProgram -> IO Text
 runCodeGeneration opts hir = do
   putStrLn "Преобразование HIR в ассемблерный код AT89S4051"
@@ -446,8 +378,10 @@ runCodeGeneration opts hir = do
     putStrLn $ "Размер кода: " ++ show (T.length assemblyCode) ++ " символов"
   
   return assemblyCode
+-}
 
 -- | Генерация базового ассемблерного кода (заглушка)
+{-
 generateBasicAssembly :: HIRProgram -> Text
 generateBasicAssembly (HIRProgram functions globals _ _) = T.unlines $
   [ "; Ассемблерный код для AT89S4051"
@@ -479,6 +413,7 @@ generateBasicAssembly (HIRProgram functions globals _ _) = T.unlines $
     generateGlobal decl = 
       [ "; Переменная " <> identifierText (hirDeclName decl)
       ]
+-}
 
 -- ============================================================================
 -- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ

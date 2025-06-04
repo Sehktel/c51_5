@@ -106,6 +106,9 @@ data SourcePos = SourcePos
   , sourceColumn :: !Int    -- ^ Номер столбца (начиная с 1)
   } deriving (Eq, Ord, Show, Data, Typeable)
 
+-- | Псевдоним для устранения конфликта с Text.Megaparsec.SourcePos
+type HCLSourcePos = SourcePos
+
 -- | Диапазон в исходном коде
 data SourceSpan = SourceSpan
   { spanStart :: !SourcePos  -- ^ Начальная позиция
@@ -164,45 +167,29 @@ data Literal
 
 -- | Бинарные операторы
 data BinaryOp
-  -- Арифметические
-  = Add | Sub | Mul | Div | Mod
-  -- Сравнения
-  | Eq | Ne | Lt | Le | Gt | Ge
-  -- Логические
-  | LogicalAnd | LogicalOr
-  -- Битовые
-  | BitwiseAnd | BitwiseOr | BitwiseXor
-  | ShiftLeft | ShiftRight
-  deriving (Eq, Ord, Show, Data, Typeable, Enum, Bounded)
+  = BinAdd | BinSub | BinMul | BinDiv | BinMod     -- Арифметические
+  | BinEQ | BinNE | BinLT | BinLE | BinGT | BinGE  -- Сравнения
+  | BinAnd | BinOr                                 -- Логические  
+  | BinBitAnd | BinBitOr | BinBitXor               -- Битовые
+  | BinShl | BinShr                                -- Сдвиги
+  deriving (Eq, Show, Enum, Bounded)
 
 -- | Унарные операторы
 data UnaryOp
-  = UnaryPlus      -- ^ Унарный плюс
-  | UnaryMinus     -- ^ Унарный минус
-  | LogicalNot     -- ^ Логическое отрицание (!)
-  | BitwiseNot     -- ^ Битовое отрицание (~)
-  | PreIncrement   -- ^ Префиксный инкремент (++x)
-  | PostIncrement  -- ^ Постфиксный инкремент (x++)
-  | PreDecrement   -- ^ Префиксный декремент (--x)
-  | PostDecrement  -- ^ Постфиксный декремент (x--)
-  | AddressOf      -- ^ Взятие адреса (&)
-  | Dereference    -- ^ Разыменование (*)
-  deriving (Eq, Ord, Show, Data, Typeable, Enum, Bounded)
+  = UnaryPlus | UnaryMinus | UnaryNot | UnaryBitNot  -- Арифметические/логические
+  | UnaryPreInc | UnaryPostInc                       -- Инкремент
+  | UnaryPreDec | UnaryPostDec                       -- Декремент
+  | UnaryDeref | UnaryAddrOf                         -- Указатели
+  | UnarySizeOf                                      -- sizeof
+  deriving (Eq, Show, Enum, Bounded)
 
 -- | Операторы присваивания
 data AssignOp
-  = SimpleAssign     -- ^ Простое присваивание (=)
-  | AddAssign        -- ^ Присваивание с сложением (+=)
-  | SubAssign        -- ^ Присваивание с вычитанием (-=)
-  | MulAssign        -- ^ Присваивание с умножением (*=)
-  | DivAssign        -- ^ Присваивание с делением (/=)
-  | ModAssign        -- ^ Присваивание с остатком (%=)
-  | AndAssign        -- ^ Присваивание с битовым И (&=)
-  | OrAssign         -- ^ Присваивание с битовым ИЛИ (|=)
-  | XorAssign        -- ^ Присваивание с битовым исключающим ИЛИ (^=)
-  | ShiftLeftAssign  -- ^ Присваивание со сдвигом влево (<<=)
-  | ShiftRightAssign -- ^ Присваивание со сдвигом вправо (>>=)
-  deriving (Eq, Ord, Show, Data, Typeable, Enum, Bounded)
+  = Assign                                           -- =
+  | AssignAdd | AssignSub | AssignMul | AssignDiv    -- +=, -=, *=, /=
+  | AssignMod | AssignShl | AssignShr                -- %=, <<=, >>=
+  | AssignBitAnd | AssignBitOr | AssignBitXor        -- &=, |=, ^=
+  deriving (Eq, Show, Enum, Bounded)
 
 -- ============================================================================
 -- УТИЛИТЫ ДЛЯ КРАСИВОГО ВЫВОДА

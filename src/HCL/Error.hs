@@ -7,7 +7,7 @@ module HCL.Error
   ( -- * Типы ошибок
     CompilerError(..)
   , LexerError(..)
-  , ParserError(..)
+--  , ParserError(..)
   , SemanticError(..)
   , CodeGenError(..)
   , LinkerError(..)
@@ -38,13 +38,14 @@ module HCL.Error
 
 import Control.Monad.Except (ExceptT, MonadError(..), runExceptT)
 import Control.Monad.Writer (WriterT, MonadWriter(..), runWriterT)
-import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
+import Data.Word (Word16)
 
-import HCL.Types (SourcePos, SourceSpan, Identifier)
+import HCL.Types (SourcePos(..), Identifier(..), sourceName, sourceLine, sourceColumn, identifierText)
 
 -- ============================================================================
 -- ТИПЫ ОШИБОК
@@ -53,7 +54,7 @@ import HCL.Types (SourcePos, SourceSpan, Identifier)
 -- | Основной тип ошибок компилятора
 data CompilerError
   = LexError LexerError
-  | ParseError ParserError  
+--  | ParseError ParserError  
   | SemanticError SemanticError
   | CodeGenError CodeGenError
   | LinkerError Text  -- ^ Ошибки линковщика
@@ -78,6 +79,7 @@ data LexerError
   deriving (Eq, Show)
 
 -- | Ошибки синтаксического анализа
+{-
 data ParserError
   = UnexpectedToken Text Text SourcePos
     -- ^ Неожиданный токен (ожидался, получен, позиция)
@@ -90,6 +92,7 @@ data ParserError
   | AmbiguousExpression Text SourcePos
     -- ^ Неоднозначное выражение
   deriving (Eq, Show)
+-}
 
 -- | Ошибки семантического анализа
 data SemanticError
@@ -236,7 +239,7 @@ collectDiagnostics action = do
     Left err -> throwError err
     Right val -> return (val, diags)
   where
-    liftIO = Control.Monad.IO.Class.liftIO
+    liftIO = liftIO
 
 -- ============================================================================
 -- УТИЛИТЫ ДЛЯ ФОРМАТИРОВАНИЯ
@@ -246,12 +249,12 @@ collectDiagnostics action = do
 prettyError :: CompilerError -> Text
 prettyError = \case
   LexError lexErr -> "Лексическая ошибка: " <> prettyLexerError lexErr
-  ParseError parseErr -> "Синтаксическая ошибка: " <> prettyParserError parseErr
+--  ParseError parseErr -> "Синтаксическая ошибка: " <> prettyParserError parseErr
   SemanticError semErr -> "Семантическая ошибка: " <> prettySemanticError semErr
   CodeGenError codeErr -> "Ошибка генерации кода: " <> prettyCodeGenError codeErr
   LinkerError msg -> "Ошибка линковщика: " <> msg
   IOError msg pos -> "Ошибка ввода-вывода: " <> msg <> " в " <> prettySourcePos pos
-  InternalError msg pos -> "Внутренняя ошибка: " <> msg <> " в " <> prettySourcePos pos
+  InternalError msg pos -> "Внутренняя ошибка компилятора: " <> msg <> " в " <> prettySourcePos pos
 
 -- | Красивый вывод ошибки лексера
 prettyLexerError :: LexerError -> Text
@@ -268,20 +271,6 @@ prettyLexerError = \case
     "Некорректный символьный литерал '" <> lit <> "' в " <> prettySourcePos pos
   InvalidEscapeSequence esc pos ->
     "Некорректная escape-последовательность '" <> esc <> "' в " <> prettySourcePos pos
-
--- | Красивый вывод ошибки парсера
-prettyParserError :: ParserError -> Text
-prettyParserError = \case
-  UnexpectedToken expected got pos ->
-    "Ожидался '" <> expected <> "', получен '" <> got <> "' в " <> prettySourcePos pos
-  UnexpectedEndOfFile pos ->
-    "Неожиданный конец файла в " <> prettySourcePos pos
-  MissingToken token pos ->
-    "Отсутствует '" <> token <> "' в " <> prettySourcePos pos
-  InvalidSyntax desc pos ->
-    "Некорректный синтаксис: " <> desc <> " в " <> prettySourcePos pos
-  AmbiguousExpression desc pos ->
-    "Неоднозначное выражение: " <> desc <> " в " <> prettySourcePos pos
 
 -- | Красивый вывод семантической ошибки
 prettySemanticError :: SemanticError -> Text
@@ -314,7 +303,7 @@ prettySemanticError = \case
   MissingReturn ident pos ->
     "Отсутствует return в функции '" <> identText ident <> "' в " <> prettySourcePos pos
   where
-    identText (HCL.Types.Identifier txt) = txt
+    identText (Identifier txt) = txt
 
 -- | Красивый вывод ошибки генерации кода
 prettyCodeGenError :: CodeGenError -> Text
@@ -331,9 +320,9 @@ prettyCodeGenError = \case
 -- | Красивый вывод позиции в исходном коде
 prettySourcePos :: SourcePos -> Text
 prettySourcePos pos = 
-  HCL.Types.sourceName pos <> ":" <> 
-  T.pack (show (HCL.Types.sourceLine pos)) <> ":" <> 
-  T.pack (show (HCL.Types.sourceColumn pos))
+  sourceName pos <> ":" <> 
+  T.pack (show (sourceLine pos)) <> ":" <> 
+  T.pack (show (sourceColumn pos))
 
 -- | Красивый вывод диагностического сообщения
 prettyDiagnostic :: Diagnostic -> Text

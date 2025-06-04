@@ -31,11 +31,18 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Void (Void)
 import Data.Char (isAlpha, isAlphaNum, isDigit, isSpace)
-import Text.Megaparsec
+import Text.Megaparsec hiding (Token, SourcePos)
+import qualified Text.Megaparsec as MP
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
+import Text.Megaparsec
+  ( ParsecT, runParser, parseTest, parseMaybe, parse, eof, between, sepBy, many, some, try
+  , choice, optional, (<|>), ParseError, ParseErrorBundle, errorBundlePretty
+  , PosState(..), getSourcePos, mkPos, errorOffset
+  )
+import qualified Data.List.NonEmpty as NE
 
-import HCL.Types (SourcePos(..), Literal(..), LiteralType(..), Identifier(..), mkIdentifier)
+import HCL.Types (SourcePos(..), Literal(..), LiteralType(..), Identifier(..), mkIdentifier, sourceName, sourceLine, sourceColumn)
 import HCL.Error (LexerError(..))
 
 -- ============================================================================
@@ -130,9 +137,9 @@ data TokenType
 
 -- | Токен с позицией в исходном коде
 data Token = Token
-  { tokenType :: !TokenType
-  , tokenPos :: !SourcePos
-  , tokenText :: !Text  -- Оригинальный текст токена
+  { tokenType :: !TokenType      -- ^ Тип токена
+  , tokenValue :: !Text          -- ^ Значение токена
+  , tokenPos :: !SourcePos       -- ^ Позиция в исходном коде
   } deriving (Eq, Show)
 
 -- ============================================================================
@@ -171,8 +178,8 @@ symbol = L.symbol spaceConsumer
 -- | Получает текущую позицию как SourcePos
 getCurrentSourcePos :: Lexer SourcePos
 getCurrentSourcePos = do
-  pos <- getSourcePos
-  return $ SourcePos "input" (unPos $ sourceLine pos) (unPos $ sourceColumn pos)
+  pos <- MP.getSourcePos
+  return $ SourcePos "input" (unPos $ MP.sourceLine pos) (unPos $ MP.sourceColumn pos)
 
 -- ============================================================================
 -- ПАРСЕРЫ КЛЮЧЕВЫХ СЛОВ
@@ -386,7 +393,7 @@ parseToken = do
         TDelimiter delim -> T.pack $ show delim
         TEOF -> ""
   
-  return $ Token tokenType pos tokenText
+  return $ Token tokenType tokenText pos
 
 -- | Парсер всех токенов
 parseTokens :: Lexer [Token]
@@ -395,7 +402,7 @@ parseTokens = do
   tokens <- many $ lexeme parseToken
   eof
   pos <- getCurrentSourcePos
-  return $ tokens ++ [Token TEOF pos ""]
+  return $ tokens ++ [Token TEOF "" pos]
 
 -- ============================================================================
 -- ПУБЛИЧНЫЙ API
@@ -439,8 +446,7 @@ tokenizeWithPos filename input =
 parseErrorToLexerError :: ParseErrorBundle Text Void -> LexerError
 parseErrorToLexerError bundle =
   let pos = bundlePos bundle
-      sourcePos = SourcePos "input" (unPos $ sourceLine pos) (unPos $ sourceColumn pos)
-  in UnexpectedCharacter '?' sourcePos  -- Упрощение
+  in UnexpectedCharacter '?' pos  -- Упрощение
 
 -- | Красивое отображение токена
 prettyToken :: Token -> Text
@@ -459,4 +465,17 @@ isKeyword _ = False
 -- | Проверяет, является ли токен оператором
 isOperator :: Token -> Bool
 isOperator Token{tokenType = TOperator _} = True
-isOperator _ = False 
+isOperator _ = False
+
+-- | Извлекает позицию из bundle ошибки парсера
+bundlePos :: ParseErrorBundle Text Void -> SourcePos
+bundlePos bundle = 
+  case NE.toList $ bundleErrors bundle of
+    (err:_) -> 
+      let offset = errorOffset err
+          posState = bundlePosState bundle
+          mpPos = pstateSourcePos $ statePosState posState offset
+      in SourcePos "input" (unPos $ MP.sourceLine mpPos) (unPos $ MP.sourceColumn mpPos)
+    [] -> SourcePos "input" 1 1
+  where
+    statePosState posState offset = posState { pstateOffset = offset } 

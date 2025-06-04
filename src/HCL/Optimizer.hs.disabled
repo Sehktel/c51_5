@@ -1,0 +1,473 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RecordWildCards #-}
+
+-- | Модуль оптимизации HIR для HCL компилятора
+--
+-- Предоставляет различные оптимизации для высокоуровневого промежуточного
+-- представления (HIR), направленные на улучшение производительности
+-- и уменьшение размера кода для микроконтроллеров 8051.
+module HCL.Optimizer
+  ( -- * Основные функции оптимизации
+    optimizeProgram
+  , optimizeFunction
+  , optimizeExpression
+  , optimizeStatement
+  
+    -- * Конкретные оптимизации
+  , deadCodeElimination
+  , constantFolding
+  , constantPropagation
+  , loopOptimization
+  , functionInlining
+  , peepholeOptimization
+  , registerAllocation
+  
+    -- * Конфигурация оптимизации
+  , OptimizationConfig(..)
+  , OptimizationPass(..)
+  , OptimizationLevel(..)
+  , defaultOptimizationConfig
+  
+    -- * Анализ потока данных
+  , DataFlowAnalysis(..)
+  , LivenessAnalysis(..)
+  , ReachingDefinitions(..)
+  , AvailableExpressions(..)
+  
+    -- * Утилиты
+  , analyzeDataFlow
+  , computeLiveness
+  , findDeadCode
+  , computeConstants
+  ) where
+
+import Control.Monad (when, unless, foldM)
+import Control.Monad.State.Strict (StateT, runStateT, get, put, modify, gets)
+import Control.Monad.Reader (ReaderT, runReaderT, ask, local)
+import Control.Monad.Writer (WriterT, runWriterT, tell)
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
+import Data.Maybe (fromMaybe, catMaybes, isJust, mapMaybe)
+import Data.List (foldl', nub, partition)
+
+import HCL.IR.HIR
+import HCL.Types (Identifier(..), identifierText)
+import HCL.Error (Diagnostic(..), DiagnosticLevel(..))
+
+-- ============================================================================
+-- КОНФИГУРАЦИЯ ОПТИМИЗАЦИИ
+-- ============================================================================
+
+-- | Уровень оптимизации
+data OptimizationLevel
+  = O0  -- ^ Без оптимизаций
+  | O1  -- ^ Базовые оптимизации
+  | O2  -- ^ Стандартные оптимизации  
+  | O3  -- ^ Агрессивные оптимизации
+  | Os  -- ^ Оптимизация размера
+  deriving (Eq, Show, Enum, Bounded)
+
+-- | Проход оптимизации
+data OptimizationPass
+  = DeadCodeEliminationPass       -- ^ Удаление мёртвого кода
+  | ConstantFoldingPass           -- ^ Свёртка констант
+  | ConstantPropagationPass       -- ^ Распространение констант
+  | LoopOptimizationPass          -- ^ Оптимизация циклов
+  | FunctionInliningPass          -- ^ Инлайнинг функций
+  | PeepholeOptimizationPass      -- ^ Peephole оптимизации
+  | RegisterAllocationPass        -- ^ Распределение регистров
+  deriving (Eq, Show, Enum, Bounded)
+
+-- | Конфигурация оптимизации
+data OptimizationConfig = OptimizationConfig
+  { ocLevel :: !OptimizationLevel               -- ^ Уровень оптимизации
+  , ocPasses :: ![OptimizationPass]             -- ^ Включённые проходы
+  , ocMaxIterations :: !Int                     -- ^ Максимальное число итераций
+  , ocOptimizeForSize :: !Bool                  -- ^ Оптимизировать размер
+  , ocOptimizeForSpeed :: !Bool                 -- ^ Оптимизировать скорость
+  , ocAggressiveInlining :: !Bool               -- ^ Агрессивный инлайнинг
+  , ocEnableVectorization :: !Bool              -- ^ Включить векторизацию
+  , ocDebugOptimizations :: !Bool               -- ^ Отладка оптимизаций
+  } deriving (Eq, Show)
+
+-- | Конфигурация оптимизации по умолчанию
+defaultOptimizationConfig :: OptimizationConfig
+defaultOptimizationConfig = OptimizationConfig
+  { ocLevel = O2
+  , ocPasses = [DeadCodeEliminationPass, ConstantFoldingPass, ConstantPropagationPass]
+  , ocMaxIterations = 5
+  , ocOptimizeForSize = False
+  , ocOptimizeForSpeed = True
+  , ocAggressiveInlining = False
+  , ocEnableVectorization = False
+  , ocDebugOptimizations = False
+  }
+
+-- ============================================================================
+-- АНАЛИЗ ПОТОКА ДАННЫХ
+-- ============================================================================
+
+-- | Анализ потока данных
+data DataFlowAnalysis = DataFlowAnalysis
+  { dfaLiveness :: !LivenessAnalysis           -- ^ Анализ живости переменных
+  , dfaReachingDefs :: !ReachingDefinitions    -- ^ Достигающие определения
+  , dfaAvailableExprs :: !AvailableExpressions -- ^ Доступные выражения
+  } deriving (Eq, Show)
+
+-- | Анализ живости переменных
+data LivenessAnalysis = LivenessAnalysis
+  { laLiveIn :: !(Map Identifier (Set Identifier))   -- ^ Живые переменные на входе
+  , laLiveOut :: !(Map Identifier (Set Identifier))  -- ^ Живые переменные на выходе
+  , laDefUse :: !(Map Identifier (Set Identifier, Set Identifier)) -- ^ Определения и использования
+  } deriving (Eq, Show)
+
+-- | Достигающие определения
+data ReachingDefinitions = ReachingDefinitions
+  { rdDefinitions :: !(Map Identifier (Set Identifier)) -- ^ Определения переменных
+  , rdReachingIn :: !(Map Identifier (Set Identifier))  -- ^ Достигающие на входе
+  , rdReachingOut :: !(Map Identifier (Set Identifier)) -- ^ Достигающие на выходе
+  } deriving (Eq, Show)
+
+-- | Доступные выражения
+data AvailableExpressions = AvailableExpressions
+  { aeExpressions :: !(Set Text)                       -- ^ Множество выражений
+  , aeAvailableIn :: !(Map Identifier (Set Text))     -- ^ Доступные на входе
+  , aeAvailableOut :: !(Map Identifier (Set Text))    -- ^ Доступные на выходе
+  } deriving (Eq, Show)
+
+-- ============================================================================
+-- ОСНОВНЫЕ ФУНКЦИИ ОПТИМИЗАЦИИ
+-- ============================================================================
+
+-- | Оптимизация программы
+optimizeProgram :: OptimizationConfig -> HIRProgram -> IO HIRProgram
+optimizeProgram config program@HIRProgram{..} = do
+  when (ocDebugOptimizations config) $
+    putStrLn $ "Оптимизация программы с уровнем " ++ show (ocLevel config)
+  
+  -- Применяем проходы оптимизации итеративно
+  optimizedProgram <- foldM (applyOptimizationIteration config) program [1..ocMaxIterations config]
+  
+  when (ocDebugOptimizations config) $
+    putStrLn "Оптимизация программы завершена"
+  
+  return optimizedProgram
+
+-- | Применение итерации оптимизации
+applyOptimizationIteration :: OptimizationConfig -> HIRProgram -> Int -> IO HIRProgram
+applyOptimizationIteration config program iteration = do
+  when (ocDebugOptimizations config) $
+    putStrLn $ "Итерация оптимизации " ++ show iteration
+  
+  -- Применяем все включённые проходы
+  foldM (applyOptimizationPass config) program (ocPasses config)
+
+-- | Применение прохода оптимизации
+applyOptimizationPass :: OptimizationConfig -> HIRProgram -> OptimizationPass -> IO HIRProgram
+applyOptimizationPass config program pass = do
+  when (ocDebugOptimizations config) $
+    putStrLn $ "Применение прохода: " ++ show pass
+  
+  case pass of
+    DeadCodeEliminationPass -> deadCodeElimination program
+    ConstantFoldingPass -> constantFolding program
+    ConstantPropagationPass -> constantPropagation program
+    LoopOptimizationPass -> loopOptimization program
+    FunctionInliningPass -> functionInlining config program
+    PeepholeOptimizationPass -> peepholeOptimization program
+    RegisterAllocationPass -> registerAllocation program
+
+-- | Оптимизация функции
+optimizeFunction :: OptimizationConfig -> HIRFunction -> IO HIRFunction
+optimizeFunction config func@HIRFunction{..} = do
+  when (ocDebugOptimizations config) $
+    putStrLn $ "Оптимизация функции: " ++ T.unpack (identifierText hirFuncName)
+  
+  -- Применяем оптимизации к телу функции
+  optimizedBody <- optimizeStatement config hirFuncBody
+  
+  return func { hirFuncBody = optimizedBody }
+
+-- | Оптимизация выражения
+optimizeExpression :: OptimizationConfig -> HIRExpression -> IO HIRExpression
+optimizeExpression config expr = case expr of
+  HIRBinaryOp op left right pos -> do
+    optimizedLeft <- optimizeExpression config left
+    optimizedRight <- optimizeExpression config right
+    -- Применяем свёртку констант
+    return $ foldConstants (HIRBinaryOp op optimizedLeft optimizedRight pos)
+  
+  HIRUnaryOp op operand pos -> do
+    optimizedOperand <- optimizeExpression config operand
+    return $ foldConstants (HIRUnaryOp op optimizedOperand pos)
+  
+  HIRFunctionCall name args pos -> do
+    optimizedArgs <- mapM (optimizeExpression config) args
+    return $ HIRFunctionCall name optimizedArgs pos
+  
+  -- Остальные выражения не требуют оптимизации
+  other -> return other
+
+-- | Оптимизация утверждения
+optimizeStatement :: OptimizationConfig -> HIRStatement -> IO HIRStatement
+optimizeStatement config stmt = case stmt of
+  HIRBlock stmts pos -> do
+    optimizedStmts <- mapM (optimizeStatement config) stmts
+    -- Удаляем мёртвый код
+    let aliveStmts = removeDeadStatements optimizedStmts
+    return $ HIRBlock aliveStmts pos
+  
+  HIRIf condition thenStmt elseStmt pos -> do
+    optimizedCondition <- optimizeExpression config condition
+    optimizedThen <- optimizeStatement config thenStmt
+    optimizedElse <- mapM (optimizeStatement config) elseStmt
+    
+    -- Проверяем на константное условие
+    case optimizedCondition of
+      HIRLiteral (HIRIntegerLiteral 0) _ -> 
+        maybe (return $ HIRBlock [] pos) return optimizedElse
+      HIRLiteral (HIRIntegerLiteral _) _ -> 
+        return optimizedThen
+      _ -> 
+        return $ HIRIf optimizedCondition optimizedThen optimizedElse pos
+  
+  HIRWhile condition body pos -> do
+    optimizedCondition <- optimizeExpression config condition
+    optimizedBody <- optimizeStatement config body
+    return $ HIRWhile optimizedCondition optimizedBody pos
+  
+  HIRFor init condition update body pos -> do
+    optimizedInit <- mapM (optimizeExpression config) init
+    optimizedCondition <- mapM (optimizeExpression config) condition
+    optimizedUpdate <- mapM (optimizeExpression config) update
+    optimizedBody <- optimizeStatement config body
+    return $ HIRFor optimizedInit optimizedCondition optimizedUpdate optimizedBody pos
+  
+  HIRAssignment target value pos -> do
+    optimizedValue <- optimizeExpression config value
+    return $ HIRAssignment target optimizedValue pos
+  
+  HIRExpressionStatement expr pos -> do
+    optimizedExpr <- optimizeExpression config expr
+    return $ HIRExpressionStatement optimizedExpr pos
+  
+  HIRReturn expr pos -> do
+    optimizedExpr <- mapM (optimizeExpression config) expr
+    return $ HIRReturn optimizedExpr pos
+  
+  -- Остальные утверждения не требуют оптимизации
+  other -> return other
+
+-- ============================================================================
+-- КОНКРЕТНЫЕ ОПТИМИЗАЦИИ
+-- ============================================================================
+
+-- | Удаление мёртвого кода
+deadCodeElimination :: HIRProgram -> IO HIRProgram
+deadCodeElimination program@HIRProgram{..} = do
+  -- Анализируем живость переменных
+  dataFlow <- analyzeDataFlow program
+  
+  -- Удаляем мёртвые функции
+  let aliveFunctions = filter (isFunctionUsed program) hirFunctions
+  
+  -- Удаляем мёртвые переменные
+  let aliveGlobals = filter (isVariableUsed dataFlow) hirGlobalVars
+  
+  return program 
+    { hirFunctions = aliveFunctions
+    , hirGlobalVars = aliveGlobals
+    }
+
+-- | Свёртка констант
+constantFolding :: HIRProgram -> IO HIRProgram
+constantFolding program@HIRProgram{..} = do
+  -- Применяем свёртку констант к функциям
+  optimizedFunctions <- mapM foldFunctionConstants hirFunctions
+  
+  return program { hirFunctions = optimizedFunctions }
+
+-- | Распространение констант
+constantPropagation :: HIRProgram -> IO HIRProgram
+constantPropagation program@HIRProgram{..} = do
+  -- Вычисляем константы
+  constants <- computeConstants program
+  
+  -- Применяем распространение констант к функциям
+  optimizedFunctions <- mapM (propagateFunctionConstants constants) hirFunctions
+  
+  return program { hirFunctions = optimizedFunctions }
+
+-- | Оптимизация циклов
+loopOptimization :: HIRProgram -> IO HIRProgram
+loopOptimization program@HIRProgram{..} = do
+  -- Применяем оптимизации циклов к функциям
+  optimizedFunctions <- mapM optimizeFunctionLoops hirFunctions
+  
+  return program { hirFunctions = optimizedFunctions }
+
+-- | Инлайнинг функций
+functionInlining :: OptimizationConfig -> HIRProgram -> IO HIRProgram
+functionInlining config program@HIRProgram{..} = do
+  if ocAggressiveInlining config
+    then do
+      -- Агрессивный инлайнинг
+      optimizedFunctions <- mapM (inlineFunctionCalls program True) hirFunctions
+      return program { hirFunctions = optimizedFunctions }
+    else do
+      -- Консервативный инлайнинг
+      optimizedFunctions <- mapM (inlineFunctionCalls program False) hirFunctions
+      return program { hirFunctions = optimizedFunctions }
+
+-- | Peephole оптимизации
+peepholeOptimization :: HIRProgram -> IO HIRProgram
+peepholeOptimization program@HIRProgram{..} = do
+  -- Применяем peephole оптимизации к функциям
+  optimizedFunctions <- mapM applyPeepholeOptimizations hirFunctions
+  
+  return program { hirFunctions = optimizedFunctions }
+
+-- | Распределение регистров
+registerAllocation :: HIRProgram -> IO HIRProgram
+registerAllocation program@HIRProgram{..} = do
+  -- Применяем распределение регистров к функциям
+  optimizedFunctions <- mapM allocateFunctionRegisters hirFunctions
+  
+  return program { hirFunctions = optimizedFunctions }
+
+-- ============================================================================
+-- УТИЛИТЫ
+-- ============================================================================
+
+-- | Анализ потока данных
+analyzeDataFlow :: HIRProgram -> IO DataFlowAnalysis
+analyzeDataFlow program = do
+  liveness <- computeLiveness program
+  reachingDefs <- computeReachingDefinitions program
+  availableExprs <- computeAvailableExpressions program
+  
+  return DataFlowAnalysis
+    { dfaLiveness = liveness
+    , dfaReachingDefs = reachingDefs
+    , dfaAvailableExprs = availableExprs
+    }
+
+-- | Вычисление живости переменных
+computeLiveness :: HIRProgram -> IO LivenessAnalysis
+computeLiveness _program = do
+  -- Простая заглушка для анализа живости
+  return LivenessAnalysis
+    { laLiveIn = Map.empty
+    , laLiveOut = Map.empty
+    , laDefUse = Map.empty
+    }
+
+-- | Поиск мёртвого кода
+findDeadCode :: DataFlowAnalysis -> HIRProgram -> [Identifier]
+findDeadCode _dataFlow _program = []
+
+-- | Вычисление констант
+computeConstants :: HIRProgram -> IO (Map Identifier HIRLiteral)
+computeConstants _program = return Map.empty
+
+-- ============================================================================
+-- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+-- ============================================================================
+
+-- | Свёртка констант в выражении
+foldConstants :: HIRExpression -> HIRExpression
+foldConstants expr = case expr of
+  HIRBinaryOp HIRAdd (HIRLiteral (HIRIntegerLiteral a) _) (HIRLiteral (HIRIntegerLiteral b) _) pos ->
+    HIRLiteral (HIRIntegerLiteral (a + b)) pos
+  HIRBinaryOp HIRSub (HIRLiteral (HIRIntegerLiteral a) _) (HIRLiteral (HIRIntegerLiteral b) _) pos ->
+    HIRLiteral (HIRIntegerLiteral (a - b)) pos
+  HIRBinaryOp HIRMul (HIRLiteral (HIRIntegerLiteral a) _) (HIRLiteral (HIRIntegerLiteral b) _) pos ->
+    HIRLiteral (HIRIntegerLiteral (a * b)) pos
+  HIRBinaryOp HIRDiv (HIRLiteral (HIRIntegerLiteral a) _) (HIRLiteral (HIRIntegerLiteral b) _) pos | b /= 0 ->
+    HIRLiteral (HIRIntegerLiteral (a `div` b)) pos
+  _ -> expr
+
+-- | Удаление мёртвых утверждений
+removeDeadStatements :: [HIRStatement] -> [HIRStatement]
+removeDeadStatements stmts = filter (not . isDeadStatement) stmts
+
+-- | Проверка, является ли утверждение мёртвым
+isDeadStatement :: HIRStatement -> Bool
+isDeadStatement stmt = case stmt of
+  HIRExpressionStatement (HIRLiteral _ _) _ -> True  -- Литерал сам по себе
+  HIRBlock [] _ -> True  -- Пустой блок
+  _ -> False
+
+-- | Проверка использования функции
+isFunctionUsed :: HIRProgram -> HIRFunction -> Bool
+isFunctionUsed _program _func = True  -- Пока все функции считаем используемыми
+
+-- | Проверка использования переменной
+isVariableUsed :: DataFlowAnalysis -> HIRDeclaration -> Bool
+isVariableUsed _dataFlow _var = True  -- Пока все переменные считаем используемыми
+
+-- | Свёртка констант в функции
+foldFunctionConstants :: HIRFunction -> IO HIRFunction
+foldFunctionConstants func@HIRFunction{..} = do
+  optimizedBody <- foldStatementConstants hirFuncBody
+  return func { hirFuncBody = optimizedBody }
+
+-- | Свёртка констант в утверждении
+foldStatementConstants :: HIRStatement -> IO HIRStatement
+foldStatementConstants stmt = case stmt of
+  HIRBlock stmts pos -> do
+    optimizedStmts <- mapM foldStatementConstants stmts
+    return $ HIRBlock optimizedStmts pos
+  
+  HIRAssignment target value pos -> do
+    let optimizedValue = foldConstants value
+    return $ HIRAssignment target optimizedValue pos
+  
+  HIRExpressionStatement expr pos -> do
+    let optimizedExpr = foldConstants expr
+    return $ HIRExpressionStatement optimizedExpr pos
+  
+  other -> return other
+
+-- | Распространение констант в функции
+propagateFunctionConstants :: Map Identifier HIRLiteral -> HIRFunction -> IO HIRFunction
+propagateFunctionConstants _constants func = return func  -- Заглушка
+
+-- | Оптимизация циклов в функции
+optimizeFunctionLoops :: HIRFunction -> IO HIRFunction
+optimizeFunctionLoops func = return func  -- Заглушка
+
+-- | Инлайнинг вызовов функций
+inlineFunctionCalls :: HIRProgram -> Bool -> HIRFunction -> IO HIRFunction
+inlineFunctionCalls _program _aggressive func = return func  -- Заглушка
+
+-- | Применение peephole оптимизаций
+applyPeepholeOptimizations :: HIRFunction -> IO HIRFunction
+applyPeepholeOptimizations func = return func  -- Заглушка
+
+-- | Распределение регистров в функции
+allocateFunctionRegisters :: HIRFunction -> IO HIRFunction
+allocateFunctionRegisters func = return func  -- Заглушка
+
+-- | Вычисление достигающих определений
+computeReachingDefinitions :: HIRProgram -> IO ReachingDefinitions
+computeReachingDefinitions _program = do
+  return ReachingDefinitions
+    { rdDefinitions = Map.empty
+    , rdReachingIn = Map.empty
+    , rdReachingOut = Map.empty
+    }
+
+-- | Вычисление доступных выражений
+computeAvailableExpressions :: HIRProgram -> IO AvailableExpressions
+computeAvailableExpressions _program = do
+  return AvailableExpressions
+    { aeExpressions = Set.empty
+    , aeAvailableIn = Map.empty
+    , aeAvailableOut = Map.empty
+    } 

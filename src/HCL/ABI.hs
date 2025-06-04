@@ -152,7 +152,7 @@ data MemorySegment
   | DataSegment       -- ^ Оперативная память (RAM) [0x0000, 0x007F]
   | SFRSegment        -- ^ Регистры специальных функций [0x80, 0xFF]
   | StackSegment      -- ^ Сегмент стека
-  deriving (Eq, Show, Enum, Bounded)
+  deriving (Eq, Show, Ord, Enum, Bounded)
 
 -- | Адресное пространство
 data AddressSpace = AddressSpace
@@ -185,7 +185,7 @@ data ABIType
   | SignedWord        -- ^ Знаковое слово: 16 бит [-32768, 32767]
   | Pointer           -- ^ Указатель: 16 бит, выравнивание 1 байт
   | BitType           -- ^ Битовый тип (специфично для 8051)
-  deriving (Eq, Show, Enum, Bounded)
+  deriving (Eq, Show, Ord, Enum, Bounded)
 
 -- | Выравнивание типов
 newtype TypeAlignment = TypeAlignment Int
@@ -206,7 +206,7 @@ data InterruptVector
   | INT1Vector        -- ^ Внешнее прерывание 1 (0x0013)
   | Timer1Vector      -- ^ Прерывание таймера 1 (0x001B)
   | SerialVector      -- ^ Прерывание последовательного порта (0x0023)
-  deriving (Eq, Show, Enum, Bounded)
+  deriving (Eq, Show, Ord, Enum, Bounded)
 
 -- | Приоритеты прерываний
 data InterruptPriority

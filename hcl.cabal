@@ -1,0 +1,250 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.38.0.
+--
+-- see: https://github.com/sol/hpack
+
+name:           hcl
+version:        0.1.0.0
+synopsis:       Haskell C51 Compiler - компилятор C для микроконтроллеров 8051
+description:    HCL (Haskell C51 Compiler) - это компилятор языка C, специально разработанный
+                для микроконтроллеров семейства 8051 (AT89S4051). Компилятор написан на Haskell
+                и обеспечивает эффективную генерацию кода для ограниченных ресурсов микроконтроллера.
+                .
+                Основные возможности:
+                * Полная поддержка синтаксиса C для 8051
+                * Специальные расширения для работы с регистрами SFR и битами
+                * Оптимизации для минимизации использования памяти
+                * Поддержка обработчиков прерываний
+                * Модульная архитектура с четким разделением фаз компиляции
+category:       Compiler
+homepage:       https://github.com/Sehktel/hcl#readme
+bug-reports:    https://github.com/Sehktel/hcl/issues
+author:         Sehktel
+maintainer:     sehktel@example.com
+copyright:      2024 Sehktel
+license:        MIT
+build-type:     Simple
+extra-source-files:
+    README.md
+    CHANGELOG.md
+
+source-repository head
+  type: git
+  location: https://github.com/Sehktel/hcl
+
+library
+  exposed-modules:
+      HCL.Lexer
+      HCL.AST
+      HCL.IR.HIR
+      HCL.Preprocessor
+      HCL.Types
+      HCL.Error
+      HCL.Config
+      HCL.Logger
+      HCL.Linker
+      HCL.Utils
+  other-modules:
+      HCL.ABI
+      Paths_hcl
+  hs-source-dirs:
+      src
+  default-extensions:
+      OverloadedStrings
+      LambdaCase
+      MultiWayIf
+      RecordWildCards
+      NamedFieldPuns
+      TupleSections
+      DerivingStrategies
+      DeriveGeneric
+      DeriveAnyClass
+      GeneralizedNewtypeDeriving
+      StandaloneDeriving
+      FlexibleContexts
+      FlexibleInstances
+      TypeApplications
+      ScopedTypeVariables
+      ConstraintKinds
+      RankNTypes
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+  build-depends:
+      aeson
+    , aeson-pretty
+    , base >=4.7 && <5
+    , bytestring
+    , containers
+    , directory
+    , filepath
+    , megaparsec >=9.0 && <10
+    , mtl
+    , optparse-applicative >=0.16 && <1
+    , parser-combinators >=1.3 && <2
+    , prettyprinter >=1.7 && <2
+    , process
+    , regex-tdfa >=1.3 && <2
+    , temporary
+    , text >=1.2 && <3
+    , time
+    , transformers
+    , vector >=0.12 && <1
+    , yaml
+  default-language: Haskell2010
+
+executable hcl-exe
+  main-is: Main.hs
+  other-modules:
+      Paths_hcl
+  hs-source-dirs:
+      app
+  default-extensions:
+      OverloadedStrings
+      LambdaCase
+      MultiWayIf
+      RecordWildCards
+      NamedFieldPuns
+      TupleSections
+      DerivingStrategies
+      DeriveGeneric
+      DeriveAnyClass
+      GeneralizedNewtypeDeriving
+      StandaloneDeriving
+      FlexibleContexts
+      FlexibleInstances
+      TypeApplications
+      ScopedTypeVariables
+      ConstraintKinds
+      RankNTypes
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      aeson
+    , aeson-pretty
+    , base >=4.7 && <5
+    , bytestring
+    , containers
+    , directory
+    , filepath
+    , hcl
+    , megaparsec >=9.0 && <10
+    , mtl
+    , optparse-applicative >=0.16 && <1
+    , parser-combinators >=1.3 && <2
+    , prettyprinter >=1.7 && <2
+    , process
+    , regex-tdfa >=1.3 && <2
+    , temporary
+    , text >=1.2 && <3
+    , time
+    , transformers
+    , vector >=0.12 && <1
+    , yaml
+  default-language: Haskell2010
+
+test-suite hcl-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      HCL.LexerSpec
+      HCL.ParserSpec
+      HCL.PeepholeOptimizerSpec
+      HCL.PreprocessorSpec
+      Paths_hcl
+  hs-source-dirs:
+      test
+  default-extensions:
+      OverloadedStrings
+      LambdaCase
+      MultiWayIf
+      RecordWildCards
+      NamedFieldPuns
+      TupleSections
+      DerivingStrategies
+      DeriveGeneric
+      DeriveAnyClass
+      GeneralizedNewtypeDeriving
+      StandaloneDeriving
+      FlexibleContexts
+      FlexibleInstances
+      TypeApplications
+      ScopedTypeVariables
+      ConstraintKinds
+      RankNTypes
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      QuickCheck >=2.14 && <3
+    , aeson
+    , aeson-pretty
+    , base >=4.7 && <5
+    , bytestring
+    , containers
+    , directory
+    , filepath
+    , hcl
+    , hspec >=2.7 && <3
+    , hspec-discover >=2.7 && <3
+    , megaparsec >=9.0 && <10
+    , mtl
+    , optparse-applicative >=0.16 && <1
+    , parser-combinators >=1.3 && <2
+    , prettyprinter >=1.7 && <2
+    , process
+    , regex-tdfa >=1.3 && <2
+    , temporary
+    , text >=1.2 && <3
+    , time
+    , transformers
+    , vector >=0.12 && <1
+    , yaml
+  default-language: Haskell2010
+
+benchmark hcl-bench
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+      Paths_hcl
+  hs-source-dirs:
+      bench
+  default-extensions:
+      OverloadedStrings
+      LambdaCase
+      MultiWayIf
+      RecordWildCards
+      NamedFieldPuns
+      TupleSections
+      DerivingStrategies
+      DeriveGeneric
+      DeriveAnyClass
+      GeneralizedNewtypeDeriving
+      StandaloneDeriving
+      FlexibleContexts
+      FlexibleInstances
+      TypeApplications
+      ScopedTypeVariables
+      ConstraintKinds
+      RankNTypes
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      aeson
+    , aeson-pretty
+    , base >=4.7 && <5
+    , bytestring
+    , containers
+    , criterion >=1.5 && <2
+    , directory
+    , filepath
+    , hcl
+    , megaparsec >=9.0 && <10
+    , mtl
+    , optparse-applicative >=0.16 && <1
+    , parser-combinators >=1.3 && <2
+    , prettyprinter >=1.7 && <2
+    , process
+    , regex-tdfa >=1.3 && <2
+    , temporary
+    , text >=1.2 && <3
+    , time
+    , transformers
+    , vector >=0.12 && <1
+    , yaml
+  default-language: Haskell2010

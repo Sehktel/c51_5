@@ -53,10 +53,20 @@ module HCL.AST
   , BitDeclaration(..)
   , SfrDeclaration(..)
   
+    -- * Дополнительные типы
+  , CaseStmt(..)
+  , Designator(..)
+  
+    -- * Вспомогательные функции
+  , mkVariable
+  , mkLiteral
+  , mkBinary
+  , mkCall
+  , mkExprStmt
+  , mkReturn
+  , mkCompound
+  
     -- * Утилиты
-  , exprPos
-  , stmtPos
-  , declPos
   , prettyAST
   ) where
 
@@ -65,8 +75,8 @@ import qualified Data.Text as T
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 
-import HCL.Types (SourcePos(..), Identifier(..), Literal(..), C51Type(..), 
-                  BinaryOp(..), UnaryOp(..), AssignOp(..))
+import HCL.Types (SourcePos(..), SourceSpan(..), Identifier(..), Literal(..), 
+                  LiteralType(..), mkIdentifier, identifierText, BinaryOp(..), UnaryOp(..), AssignOp(..))
 
 -- ============================================================================
 -- ПРОГРАММА И ДЕКЛАРАЦИИ ВЕРХНЕГО УРОВНЯ
@@ -289,18 +299,6 @@ data SfrDeclaration = SfrDeclaration
 -- ============================================================================
 -- УТИЛИТЫ
 -- ============================================================================
-
--- | Получает позицию выражения
-exprPos :: Expr -> SourcePos
-exprPos (Expr _ pos) = pos
-
--- | Получает позицию оператора
-stmtPos :: Stmt -> SourcePos
-stmtPos (Stmt _ pos) = pos
-
--- | Получает позицию декларации
-declPos :: Declaration -> SourcePos
-declPos = declPos
 
 -- | Красивое отображение AST (упрощенная версия)
 prettyAST :: Program -> Text
