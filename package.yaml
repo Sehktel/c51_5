@@ -93,6 +93,7 @@ library:
   - HCL.Logger
   - HCL.Optimizer
   - HCL.CodeGen
+  - HCL.Linker
   - HCL.Utils
 
 executables:

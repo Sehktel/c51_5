@@ -41,11 +41,13 @@ help:
 	@echo "$(GREEN)Тестирование:$(NC)"
 	@echo "  test-unit  - Только модульные тесты"
 	@echo "  test-watch - Автоматический запуск тестов"
+	@echo "  test-linker - Тестирование линковщика"
 	@echo "  bench      - Бенчмарки производительности"
 	@echo ""
 	@echo "$(GREEN)Примеры:$(NC)"
 	@echo "  examples   - Компиляция примеров"
 	@echo "  demo       - Демонстрация возможностей"
+	@echo "  generate-all - Генерация всех форматов файлов"
 	@echo ""
 	@echo "$(GREEN)Утилиты:$(NC)"
 	@echo "  deps       - Установка зависимостей"
@@ -149,6 +151,35 @@ examples: build
 	@if [ -f examples/blink.c ]; then \
 		echo "$(GREEN)Компиляция blink.c...$(NC)"; \
 		$(STACK) exec -- $(EXECUTABLE) examples/blink.c -o examples/blink.asm -v; \
+	else \
+		echo "$(RED)Файл examples/blink.c не найден$(NC)"; \
+	fi
+
+# Тестирование линковщика
+test-linker: build
+	@echo "$(BLUE)Тестирование линковщика...$(NC)"
+	@if [ -f examples/blink.c ]; then \
+		echo "$(GREEN)Компиляция с линковкой blink.c...$(NC)"; \
+		$(STACK) exec -- $(EXECUTABLE) examples/blink.c --hex -o examples/blink -v; \
+		echo "$(GREEN)Генерация HEX файла...$(NC)"; \
+		$(STACK) exec -- $(EXECUTABLE) examples/blink.c --format hex -o examples/blink -v; \
+		echo "$(GREEN)Генерация листинга...$(NC)"; \
+		$(STACK) exec -- $(EXECUTABLE) examples/blink.c --format lst -o examples/blink -v; \
+	else \
+		echo "$(RED)Файл examples/blink.c не найден$(NC)"; \
+	fi
+
+# Генерация всех форматов
+generate-all: build
+	@echo "$(BLUE)Генерация всех форматов выходных файлов...$(NC)"
+	@if [ -f examples/blink.c ]; then \
+		echo "$(GREEN)Генерация HEX...$(NC)"; \
+		$(STACK) exec -- $(EXECUTABLE) examples/blink.c --hex -o examples/blink_hex; \
+		echo "$(GREEN)Генерация двоичного файла...$(NC)"; \
+		$(STACK) exec -- $(EXECUTABLE) examples/blink.c --bin -o examples/blink_bin; \
+		echo "$(GREEN)Генерация листинга...$(NC)"; \
+		$(STACK) exec -- $(EXECUTABLE) examples/blink.c --lst -o examples/blink_lst; \
+		echo "$(GREEN)Все форматы сгенерированы в examples/$(NC)"; \
 	else \
 		echo "$(RED)Файл examples/blink.c не найден$(NC)"; \
 	fi

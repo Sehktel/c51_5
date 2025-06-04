@@ -12,18 +12,23 @@ import Control.Monad (when, unless)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
+import qualified Data.Map.Strict as Map
 import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
 import System.IO (hPutStrLn, stderr)
+import System.FilePath (replaceExtension)
+import Data.Maybe (fromMaybe)
 import Options.Applicative
 
 import HCL.Preprocessor (preprocess, defaultOptions, PreprocessorOptions(..), PreprocessorResult(..))
-import HCL.Lexer (tokenize, LexerResult(..), prettyToken)
+import HCL.Lexer (tokenize, LexerResult(..), prettyToken, Token)
 import HCL.Parser (parseProgram, runParser, ParseResult(..), prettyParseError)
-import HCL.AST (prettyAST)
-import HCL.IR.HIR (HIRProgram, prettyHIR)
+import HCL.AST (prettyAST, Program)
+import HCL.IR.HIR (HIRProgram(..), HIRDeclaration(..), HIRFunction(..), prettyHIR)
 import HCL.SemanticAnalysis (runSemanticAnalysis)
-import HCL.Error (Diagnostic(..), DiagnosticLevel(..), prettyDiagnostic)
+import HCL.Error (Diagnostic(..), DiagnosticLevel(..), prettyDiagnostic, CompilerError, prettyError)
+import HCL.Types (identifierText)
+import qualified HCL.Linker as Linker
 
 -- ============================================================================
 -- ОПЦИИ КОМАНДНОЙ СТРОКИ
@@ -33,14 +38,27 @@ import HCL.Error (Diagnostic(..), DiagnosticLevel(..), prettyDiagnostic)
 data CompilerOptions = CompilerOptions
   { optInputFile :: !FilePath           -- ^ Входной файл
   , optOutputFile :: !(Maybe FilePath)  -- ^ Выходной файл
+  , optOutputFormat :: !OutputFormat    -- ^ Формат выходного файла
   , optStopAfter :: !CompilerPhase      -- ^ Остановиться после фазы
+  , optOptimizationLevel :: !Int        -- ^ Уровень оптимизации (0-3)
+  , optOptimizeFor :: !OptimizeTarget   -- ^ Цель оптимизации
   , optVerbose :: !Bool                 -- ^ Подробный вывод
   , optShowTokens :: !Bool              -- ^ Показать токены
   , optShowAST :: !Bool                 -- ^ Показать AST
   , optShowHIR :: !Bool                 -- ^ Показать HIR
+  , optShowOptimizedHIR :: !Bool        -- ^ Показать оптимизированный HIR
   , optIncludePaths :: ![FilePath]      -- ^ Пути поиска заголовочных файлов
   , optDefines :: ![(Text, Text)]       -- ^ Предопределенные макросы
   } deriving (Eq, Show)
+
+-- | Формат выходного файла
+data OutputFormat
+  = OutputAssembly   -- ^ Ассемблерный код (.asm, .s)
+  | OutputObject     -- ^ Объектный файл (.obj, .o)
+  | OutputHex        -- ^ Intel HEX файл (.hex)
+  | OutputBinary     -- ^ Двоичный файл (.bin)
+  | OutputListing    -- ^ Листинг с адресами (.lst)
+  deriving (Eq, Show, Enum, Bounded)
 
 -- | Фазы компиляции
 data CompilerPhase
@@ -50,6 +68,15 @@ data CompilerPhase
   | PhaseSemantic     -- ^ Семантический анализ
   | PhaseOptimize     -- ^ Оптимизация
   | PhaseCodeGen      -- ^ Генерация кода
+  | PhaseLink         -- ^ Линковка
+  deriving (Eq, Show, Enum, Bounded)
+
+-- | Цель оптимизации
+data OptimizeTarget
+  = OptimizeSpeed    -- ^ Оптимизация скорости (-O2, -O3)
+  | OptimizeSize     -- ^ Оптимизация размера (-Os)
+  | OptimizeBalance  -- ^ Сбалансированная оптимизация (-O1)
+  | OptimizeNone     -- ^ Без оптимизаций (-O0)
   deriving (Eq, Show, Enum, Bounded)
 
 -- ============================================================================
@@ -67,12 +94,15 @@ compilerOptions = CompilerOptions
      <> short 'o'
      <> metavar "FILE"
      <> help "Выходной файл" ))
+  <*> (outputFormatOption <|> pure OutputAssembly)  -- По умолчанию ассемблер
   <*> option readPhase
       ( long "stop-after"
      <> short 's'
      <> value PhaseCodeGen
      <> metavar "PHASE"
-     <> help "Остановиться после фазы (preprocess|lex|parse|semantic|optimize|codegen)" )
+     <> help "Остановиться после фазы (preprocess|lex|parse|semantic|optimize|codegen|link)" )
+  <*> (optimizationLevelOption <|> pure 2)  -- По умолчанию -O2
+  <*> (optimizeTargetOption <|> pure OptimizeBalance)  -- По умолчанию сбалансированная
   <*> switch
       ( long "verbose"
      <> short 'v'
@@ -86,6 +116,9 @@ compilerOptions = CompilerOptions
   <*> switch
       ( long "show-hir"
      <> help "Показать высокоуровневое промежуточное представление" )
+  <*> switch
+      ( long "show-optimized-hir"
+     <> help "Показать оптимизированный HIR" )
   <*> many (strOption
       ( long "include"
      <> short 'I'
@@ -97,6 +130,46 @@ compilerOptions = CompilerOptions
      <> metavar "NAME[=VALUE]"
      <> help "Определить макрос" ))
 
+-- | Парсер формата выходного файла
+outputFormatOption :: Parser OutputFormat
+outputFormatOption = 
+  flag' OutputAssembly (long "asm" <> help "Генерировать ассемблерный код") <|>
+  flag' OutputObject (long "obj" <> short 'c' <> help "Генерировать объектный файл") <|>
+  flag' OutputHex (long "hex" <> help "Генерировать Intel HEX файл") <|>
+  flag' OutputBinary (long "bin" <> help "Генерировать двоичный файл") <|>
+  flag' OutputListing (long "lst" <> help "Генерировать листинг с адресами") <|>
+  option readOutputFormat (long "format" <> short 'f' <> metavar "FORMAT" <> help "Формат выходного файла (asm|obj|hex|bin|lst)")
+
+-- | Читает формат выходного файла
+readOutputFormat :: ReadM OutputFormat
+readOutputFormat = eitherReader $ \s -> case s of
+  "asm" -> Right OutputAssembly
+  "obj" -> Right OutputObject
+  "hex" -> Right OutputHex
+  "bin" -> Right OutputBinary
+  "lst" -> Right OutputListing
+  _ -> Left $ "Unknown output format: " ++ s
+
+-- | Парсер уровня оптимизации (поддерживает -O0, -O1, -O2, -O3, -Os)
+optimizationLevelOption :: Parser Int
+optimizationLevelOption = 
+  flag' 0 (long "O0" <> help "Без оптимизаций") <|>
+  flag' 1 (long "O1" <> help "Базовые оптимизации") <|>
+  flag' 2 (long "O2" <> help "Стандартные оптимизации") <|>
+  flag' 3 (long "O3" <> help "Агрессивные оптимизации") <|>
+  flag' (-1) (long "Os" <> help "Оптимизация размера") <|>  -- -1 для Os
+  option auto (long "optimization-level" <> short 'O' <> metavar "LEVEL" <> help "Уровень оптимизации (0-3)")
+
+-- | Парсер цели оптимизации
+optimizeTargetOption :: Parser OptimizeTarget
+optimizeTargetOption = 
+  flag' OptimizeNone (long "O0" <> help "Без оптимизаций") <|>
+  flag' OptimizeBalance (long "O1" <> help "Базовые оптимизации") <|>
+  flag' OptimizeSpeed (long "O2" <> help "Стандартные оптимизации") <|>
+  flag' OptimizeSpeed (long "O3" <> help "Агрессивные оптимизации") <|>
+  flag' OptimizeSize (long "Os" <> help "Оптимизация размера") <|>
+  option readOptimizeFor (long "optimize-for" <> short 'f' <> metavar "TARGET" <> help "Цель оптимизации (speed|size|balance|none)")
+
 -- | Читает фазу компиляции
 readPhase :: ReadM CompilerPhase
 readPhase = eitherReader $ \s -> case s of
@@ -106,7 +179,26 @@ readPhase = eitherReader $ \s -> case s of
   "semantic" -> Right PhaseSemantic
   "optimize" -> Right PhaseOptimize
   "codegen" -> Right PhaseCodeGen
+  "link" -> Right PhaseLink
   _ -> Left $ "Unknown phase: " ++ s
+
+-- | Читает уровень оптимизации
+readOptimizationLevel :: ReadM Int
+readOptimizationLevel = eitherReader $ \s -> case s of
+  "0" -> Right 0
+  "1" -> Right 1
+  "2" -> Right 2
+  "3" -> Right 3
+  _ -> Left $ "Unknown optimization level: " ++ s
+
+-- | Читает цель оптимизации
+readOptimizeFor :: ReadM OptimizeTarget
+readOptimizeFor = eitherReader $ \s -> case s of
+  "speed" -> Right OptimizeSpeed
+  "size" -> Right OptimizeSize
+  "balance" -> Right OptimizeBalance
+  "none" -> Right OptimizeNone
+  _ -> Left $ "Unknown optimization target: " ++ s
 
 -- | Читает определение макроса
 readDefine :: ReadM (Text, Text)
@@ -203,17 +295,42 @@ compileFile opts@CompilerOptions{..} = do
                       putStrLn "=== Генерация кода ==="
                       assemblyCode <- runCodeGeneration opts optimizedHir
                       
-                      -- Записываем результат в выходной файл
-                      case optOutputFile of
-                        Just outputFile -> do
-                          TIO.writeFile outputFile assemblyCode
-                          putStrLn $ "Ассемблерный код записан в: " ++ outputFile
-                        Nothing -> do
-                          putStrLn "=== Ассемблерный код ==="
-                          TIO.putStrLn assemblyCode
-                  
-                  putStrLn "Компиляция завершена успешно!"
-                  return ()
+                      -- Записываем ассемблерный код во временный файл для линковки
+                      let tempAsmFile = replaceExtension optInputFile ".asm"
+                      TIO.writeFile tempAsmFile assemblyCode
+                      
+                      when (optStopAfter >= PhaseLink) $ do
+                        putStrLn "=== Линковка ==="
+                        linkerResult <- runLinker opts [tempAsmFile]
+                        
+                        case linkerResult of
+                          Left err -> do
+                            putStrLn $ "Ошибка линковки: " ++ T.unpack (prettyError err)
+                            return $ Left (prettyError err)
+                          Right result -> do
+                            when (optVerbose opts) $ do
+                              putStrLn "=== Результат линковки ==="
+                              TIO.putStrLn (Linker.prettyLinkerResult result)
+                            
+                            -- Генерируем выходные файлы
+                            let baseFileName = fromMaybe (replaceExtension optInputFile "") optOutputFile
+                            generateLinkerOutput opts result baseFileName
+                            
+                            putStrLn "Компиляция и линковка завершены успешно!"
+                            return $ Right "Успешно"
+                      
+                      -- Если останавливаемся на генерации кода
+                      when (optStopAfter == PhaseCodeGen) $ do
+                        case optOutputFile of
+                          Just outputFile -> do
+                            TIO.writeFile outputFile assemblyCode
+                            putStrLn $ "Ассемблерный код записан в: " ++ outputFile
+                          Nothing -> do
+                            putStrLn "=== Ассемблерный код ==="
+                            TIO.putStrLn assemblyCode
+                        
+                        putStrLn "Компиляция завершена успешно!"
+                        return $ Right "Успешно"
 
 -- ============================================================================
 -- ФАЗЫ КОМПИЛЯЦИИ
@@ -332,7 +449,7 @@ runCodeGeneration opts hir = do
 
 -- | Генерация базового ассемблерного кода (заглушка)
 generateBasicAssembly :: HIRProgram -> Text
-generateBasicAssembly (HIRProgram decls) = T.unlines $
+generateBasicAssembly (HIRProgram functions globals _ _) = T.unlines $
   [ "; Ассемблерный код для AT89S4051"
   , "; Сгенерирован HCL компилятором"
   , ""
@@ -341,7 +458,8 @@ generateBasicAssembly (HIRProgram decls) = T.unlines $
   , ""
   , ".org 0x0030  ; Начало пользовательского кода"
   , ""
-  ] ++ concatMap generateDeclaration decls ++
+  ] ++ concatMap generateFunction functions ++
+    concatMap generateGlobal globals ++
   [ ""
   , "end:"
   , "    sjmp end"
@@ -349,27 +467,18 @@ generateBasicAssembly (HIRProgram decls) = T.unlines $
   , ".end"
   ]
   where
-    generateDeclaration :: HIRDeclaration -> [Text]
-    generateDeclaration = \case
-      HIRFunctionDecl _ name _ _ _ -> 
-        [ name' <> ":"
-        , "    ; Функция " <> name'
-        , "    ret"
-        , ""
-        ]
-        where name' = identifierText name
-      
-      HIRVariableDecl _ name _ _ -> 
-        [ "; Переменная " <> identifierText name
-        ]
-      
-      HIRBitDecl name addr _ ->
-        [ identifierText name <> " equ " <> T.pack (show addr) <> "h"
-        ]
-      
-      HIRSfrDecl name addr _ ->
-        [ identifierText name <> " equ " <> T.pack (show addr) <> "h"
-        ]
+    generateFunction :: HIRFunction -> [Text]
+    generateFunction func = 
+      [ identifierText (hirFuncName func) <> ":"
+      , "    ; Функция " <> identifierText (hirFuncName func)
+      , "    ret"
+      , ""
+      ]
+    
+    generateGlobal :: HIRDeclaration -> [Text]
+    generateGlobal decl = 
+      [ "; Переменная " <> identifierText (hirDeclName decl)
+      ]
 
 -- ============================================================================
 -- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -382,8 +491,30 @@ outputResult CompilerOptions{..} content =
     Just filename -> TIO.writeFile filename content
     Nothing -> TIO.putStr content
 
--- | Импорты для недостающих типов
-import qualified Data.Map.Strict as Map
-import HCL.Lexer (Token)
-import HCL.AST (Program)
-import HCL.IR.HIR (HIRProgram) 
+-- | Запуск линковщика
+runLinker :: CompilerOptions -> [FilePath] -> IO (Either CompilerError Linker.LinkerResult)
+runLinker CompilerOptions{..} objectFiles = do
+  let linkerConfig = Linker.defaultLinkerConfig
+        { Linker.lcVerbose = optVerbose
+        , Linker.lcOutputFormats = convertOutputFormats optOutputFormat
+        }
+  
+  Linker.linkProgram linkerConfig objectFiles
+
+-- | Преобразование формата вывода в форматы линковщика
+convertOutputFormats :: OutputFormat -> [Linker.OutputFormat]
+convertOutputFormats = \case
+  OutputAssembly -> []  -- Ассемблерный код уже сгенерирован
+  OutputObject -> []    -- Объектные файлы не генерируются линковщиком
+  OutputHex -> [Linker.FormatHex]
+  OutputBinary -> [Linker.FormatBinary]
+  OutputListing -> [Linker.FormatListing, Linker.FormatMap]
+
+-- | Генерация выходных файлов линковщика
+generateLinkerOutput :: CompilerOptions -> Linker.LinkerResult -> FilePath -> IO ()
+generateLinkerOutput CompilerOptions{..} result baseFileName = do
+  let linkerConfig = Linker.defaultLinkerConfig
+        { Linker.lcOutputFormats = convertOutputFormats optOutputFormat
+        }
+  
+  Linker.generateOutput linkerConfig result baseFileName 

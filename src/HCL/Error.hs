@@ -10,6 +10,7 @@ module HCL.Error
   , ParserError(..)
   , SemanticError(..)
   , CodeGenError(..)
+  , LinkerError(..)
   , ErrorSeverity(..)
   
     -- * Диагностические сообщения
@@ -55,6 +56,7 @@ data CompilerError
   | ParseError ParserError  
   | SemanticError SemanticError
   | CodeGenError CodeGenError
+  | LinkerError Text  -- ^ Ошибки линковщика
   | IOError Text SourcePos  -- ^ Ошибки ввода-вывода
   | InternalError Text SourcePos  -- ^ Внутренние ошибки компилятора
   deriving (Eq, Show)
@@ -127,6 +129,26 @@ data CodeGenError
     -- ^ Некорректный адрес назначения
   | OptimizationFailed Text SourcePos
     -- ^ Ошибка оптимизации
+  deriving (Eq, Show)
+
+-- | Ошибки линковщика
+data LinkerError
+  = UndefinedSymbol Text
+    -- ^ Неопределённый символ
+  | DuplicateSymbol Text
+    -- ^ Дублирование символа
+  | InvalidObjectFile Text Text
+    -- ^ Некорректный объектный файл (файл, причина)
+  | MemoryOverflow Text Word16 Word16
+    -- ^ Переполнение памяти (тип, использовано, доступно)
+  | InvalidRelocation Text Text
+    -- ^ Некорректное перемещение (символ, причина)
+  | CircularDependency [Text]
+    -- ^ Циклическая зависимость символов
+  | IncompatibleArchitecture Text Text
+    -- ^ Несовместимая архитектура (ожидается, получена)
+  | InvalidMemoryLayout Text
+    -- ^ Некорректное размещение в памяти
   deriving (Eq, Show)
 
 -- | Уровень серьезности ошибки
@@ -227,6 +249,7 @@ prettyError = \case
   ParseError parseErr -> "Синтаксическая ошибка: " <> prettyParserError parseErr
   SemanticError semErr -> "Семантическая ошибка: " <> prettySemanticError semErr
   CodeGenError codeErr -> "Ошибка генерации кода: " <> prettyCodeGenError codeErr
+  LinkerError msg -> "Ошибка линковщика: " <> msg
   IOError msg pos -> "Ошибка ввода-вывода: " <> msg <> " в " <> prettySourcePos pos
   InternalError msg pos -> "Внутренняя ошибка: " <> msg <> " в " <> prettySourcePos pos
 

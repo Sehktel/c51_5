@@ -1,0 +1,76 @@
+{
+  "compiler": {
+    "executable": "..\\..\\app\\c51_compiler.exe",
+    "project_root": "..\\..",
+    "timeout_seconds": 30
+  },
+  "compilation": {
+    "target": "at89s4051",
+    "optimization_level": 2,
+    "optimization_flags": ["-O2"],
+    "optimize_for": "speed",
+    "memory_model": "small",
+    "debug": true,
+    "additional_flags": []
+  },
+  "output": {
+    "hex_extension": ".hex",
+    "obj_extension": ".obj",
+    "lst_extension": ".lst",
+    "create_listing": false
+  },
+  "testing": {
+    "syntax_check_only": false,
+    "verbose_output": true,
+    "stop_on_first_error": false,
+    "generate_report": true,
+    "report_filename": "compiler_test_report.txt"
+  },
+  "files": {
+    "test_files": [
+      {
+        "source": "test_memory_types.c",
+        "output": "test_memory",
+        "description": "Типы памяти C51"
+      },
+      {
+        "source": "test_bit_operations.c",
+        "output": "test_bits",
+        "description": "Битовые операции"
+      },
+      {
+        "source": "test_timer_operations.c",
+        "output": "test_timers",
+        "description": "Работа с таймерами"
+      },
+      {
+        "source": "test_port_operations.c",
+        "output": "test_ports",
+        "description": "Операции с портами"
+      },
+      {
+        "source": "test_interrupt_setup.c",
+        "output": "test_interrupts",
+        "description": "Настройка прерываний"
+      },
+      {
+        "source": "main_test.c",
+        "output": "main_test",
+        "description": "Главный тестовый файл"
+      }
+    ]
+  },
+  "colors": {
+    "info": "Cyan",
+    "success": "Green",
+    "error": "Red",
+    "warning": "Yellow",
+    "debug": "Gray"
+  },
+  "build": {
+    "auto_build_if_missing": true,
+    "build_command": "stack",
+    "build_args": ["build"],
+    "build_timeout_seconds": 300
+  }
+} 
